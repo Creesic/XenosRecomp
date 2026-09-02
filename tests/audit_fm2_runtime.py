@@ -160,6 +160,25 @@ def main() -> int:
         if count == 0:
             failures.append(f"runtime corpus did not exercise {label}")
 
+    cache_output = args.work / "shader_cache.cpp"
+    cache_result = subprocess.run(
+        [
+            str(args.xenos_recomp),
+            str(args.runtime),
+            str(cache_output),
+            str(args.shader_common),
+            "--jobs",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    if cache_result.returncode:
+        failures.append(
+            "full runtime cache compilation failed "
+            f"({cache_result.returncode}): {cache_result.stderr[-2000:]}"
+        )
+
     report = {
         "status": "pass" if not failures else "fail",
         "shader_count": shader_count,

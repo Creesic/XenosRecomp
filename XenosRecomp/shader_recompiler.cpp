@@ -2697,6 +2697,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\tuint4 loopCount = 0;\n";
         out += "\tint4 loopStartAddress = 0;\n";
         out += "\tint4 loopStep = 0;\n";
+        out += "\tuint loopConstant = 0;\n";
+        out += "\tuint loopIndex = 0;\n";
         out += "\twhile (true)\n";
         out += "\t{\n";
         out += "\t\tswitch (pc)\n";
@@ -2843,7 +2845,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 else
                 {
                     indent();
-                    println("uint loopConstant = g_LoopConstant({});", uint32_t(cfInstr.loopStart.loopId));
+                    println("loopConstant = g_LoopConstant({});", uint32_t(cfInstr.loopStart.loopId));
                     indent();
                     out += "loopIterator[loopDepth] = 0;\n";
                     indent();
@@ -2886,7 +2888,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 else
                 {
                     indent();
-                    out += "uint loopIndex = loopDepth - 1u;\n";
+                    out += "loopIndex = loopDepth - 1u;\n";
                     if (cfInstr.loopEnd.isPredicatedBreak)
                     {
                         indent();
