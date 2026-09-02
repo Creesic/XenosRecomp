@@ -32,6 +32,12 @@ target_include_directories(XenosRecomp PRIVATE ${SMOLV_SOURCE_DIR})
 
 target_precompile_headers(XenosRecomp PRIVATE pch.h)
 
+if (MSVC)
+    target_compile_options(XenosRecomp PRIVATE /EHsc)
+else()
+    target_compile_options(XenosRecomp PRIVATE -fexceptions)
+endif()
+
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     target_compile_options(XenosRecomp PRIVATE -Wno-switch -Wno-unused-variable -Wno-null-arithmetic -fms-extensions)
 endif()
