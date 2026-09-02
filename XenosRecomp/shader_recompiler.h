@@ -29,6 +29,7 @@ struct ShaderRecompiler : StringBuffer
     std::unordered_map<uint32_t, VertexElement> vertexElements;
     std::unordered_map<uint32_t, std::string> interpolators;
     std::unordered_map<uint32_t, const ConstantInfo*> float4Constants;
+    std::unordered_set<uint32_t> float4Definitions;
     std::unordered_map<uint32_t, const char*> boolConstants;
     std::unordered_map<uint32_t, const char*> samplers;
     std::unordered_map<uint32_t, uint32_t> ifEndLabels;
@@ -45,7 +46,7 @@ struct ShaderRecompiler : StringBuffer
             out += '\t';
     }
 
-    void printDstSwizzle(uint32_t dstSwizzle, bool operand);
+    uint32_t printDstSwizzle(uint32_t dstSwizzle, bool operand);
     void printDstSwizzle01(uint32_t dstRegister, uint32_t dstSwizzle);
 
     void recompile(const VertexFetchInstruction& instr, uint32_t address);

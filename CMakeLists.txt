@@ -8,3 +8,8 @@ set(XENOS_RECOMP_THIRDPARTY_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty")
 
 add_subdirectory(${XENOS_RECOMP_THIRDPARTY_ROOT})
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/XenosRecomp")
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

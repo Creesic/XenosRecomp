@@ -1,8 +1,17 @@
 #ifndef SHADER_COMMON_H_INCLUDED
 #define SHADER_COMMON_H_INCLUDED
 
-#define SPEC_CONSTANT_R11G11B10_NORMAL  (1 << 0)
-#define SPEC_CONSTANT_ALPHA_TEST        (1 << 1)
+#define SPEC_CONSTANT_R11G11B10_NORMAL   (1 << 0)
+#define SPEC_CONSTANT_ALPHA_TEST         (1 << 1)
+// Set when the bound vertex declaration packs the tangent basis as unnormalized
+// UBYTE4 (delivered as R8G8B8A8_UNORM, i.e. v/255). The guest microcode decodes
+// it with v*(1/127)-1 expecting the raw 0..255 byte, so scale back up by 255.
+#define SPEC_CONSTANT_UNPACK_UBYTE4_BASIS (1 << 6)
+// FM2 (bug-127): set when the bound declaration's POSITION0 is FLOAT16_2/4.
+// The input layout exposes the raw 16-bit words zero-extended into uint4, so
+// tfetchPos3N must convert with f16tof32 -- the 32-bit bitcast used for FLOAT
+// streams turns half bits into denormals (~0) and the mesh collapses.
+#define SPEC_CONSTANT_POSITION_F16 (1 << 7)
 
 #ifdef UNLEASHED_RECOMP
     #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)
@@ -10,10 +19,16 @@
     #define SPEC_CONSTANT_REVERSE_Z         (1 << 4)
 #endif
 
-#if !defined(__cplusplus) || defined(__INTELLISENSE__)
+#ifdef MARATHON_RECOMP
+    #define SPEC_CONSTANT_CONDITIONAL_RENDERING (1 << 5)
+#endif
 
+#if defined(__air__) || !defined(__cplusplus) || defined(__INTELLISENSE__)
+
+#ifndef __air__
 #define FLT_MIN asfloat(0xff7fffff)
 #define FLT_MAX asfloat(0x7f7fffff)
+#endif
 
 #ifdef __spirv__
 
@@ -26,31 +41,329 @@ struct PushConstants
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
 
-#define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
-#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
-#define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 264)
-#define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 272)
+#define g_Booleans                  vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
+#define g_SwappedTexcoords          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
+#define g_SwappedNormals            vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 264)
+#define g_SwappedBinormals          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 268)
+#define g_SwappedTangents           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 272)
+#define g_SwappedBlendWeights       vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 276)
+#define g_HalfPixelOffset           vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 280)
+#define g_ClipPlane                 vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 288)
+#define g_ClipPlaneEnabled          vk::RawBufferLoad<bool>(g_PushConstants.SharedConstants + 304)
+#define g_AlphaThreshold            vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 308)
+#define g_conditionalSurveyIndex    vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 312)
+#define g_conditionalRenderingIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 316)
+// bug-140: Xenos PA_CL_VTE_CNTL vertex-export modes, mirrored from Xenia's
+// xe_flags (bit1<<1=XY already divided by W, bit2=Z divided by W, bit3=W is W
+// not 1/W). Default 8 = standard homogeneous output (no-op tail).
+#define g_VteFlags vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 320)
+#define g_LoopConstant(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 324 + uint(INDEX) * 4)
 
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
 
 #define g_SpecConstants() g_SpecConstants
+
+#elif defined(__air__)
+
+#include <metal_stdlib>
+
+using namespace metal;
+
+constant uint G_SPEC_CONSTANTS [[function_constant(0)]];
+constant uint G_SPEC_CONSTANTS_VAL = is_function_constant_defined(G_SPEC_CONSTANTS) ? G_SPEC_CONSTANTS : 0;
+
+uint g_SpecConstants()
+{
+    return G_SPEC_CONSTANTS_VAL;
+}
+
+struct PushConstants
+{
+    ulong VertexShaderConstants;
+    ulong PixelShaderConstants;
+    ulong SharedConstants;
+};
+
+#define g_Booleans (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 256)))
+#define g_SwappedTexcoords (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 260)))
+#define g_SwappedNormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 264)))
+#define g_SwappedBinormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 268)))
+#define g_SwappedTangents (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 272)))
+#define g_SwappedBlendWeights (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 276)))
+#define g_HalfPixelOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 280)))
+#define g_ClipPlane (*(reinterpret_cast<device float4*>(g_PushConstants.SharedConstants + 288)))
+#define g_ClipPlaneEnabled (*(reinterpret_cast<device bool*>(g_PushConstants.SharedConstants + 304)))
+#define g_AlphaThreshold (*(reinterpret_cast<device float*>(g_PushConstants.SharedConstants + 308)))
+#define g_conditionalSurveyIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 312)))
+#define g_conditionalRenderingIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 316)))
+#define g_VteFlags (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 320)))
+#define g_LoopConstant(INDEX) (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 324 + uint(INDEX) * 4)))
 
 #else
 
 #define DEFINE_SHARED_CONSTANTS() \
     uint g_Booleans : packoffset(c16.x); \
     uint g_SwappedTexcoords : packoffset(c16.y); \
-    float2 g_HalfPixelOffset : packoffset(c16.z); \
-    float g_AlphaThreshold : packoffset(c17.x);
+    uint g_SwappedNormals : packoffset(c16.z); \
+    uint g_SwappedBinormals : packoffset(c16.w); \
+    uint g_SwappedTangents : packoffset(c17.x);  \
+    uint g_SwappedBlendWeights : packoffset(c17.y); \
+    float2 g_HalfPixelOffset : packoffset(c17.z); \
+    float4 g_ClipPlane : packoffset(c18.x); \
+    bool g_ClipPlaneEnabled : packoffset(c19.x); \
+    float g_AlphaThreshold : packoffset(c19.y); \
+    uint g_conditionalSurveyIndex : packoffset(c19.z); \
+    uint g_conditionalRenderingIndex : packoffset(c19.w); \
+    uint4 g_VteAndLoopConstants[9] : packoffset(c20);
+
+#define g_VteFlags g_VteAndLoopConstants[0].x
+#define g_LoopConstant(INDEX) g_VteAndLoopConstants[(uint(INDEX) + 1u) >> 2][(uint(INDEX) + 1u) & 3u]
 
 uint g_SpecConstants();
 
 #endif
 
+float4 cube(float4 value)
+{
+    float3 src = value.zwx;
+    float3 abs_src = abs(src);
+
+    float sc, tc, ma, id;
+
+    if (abs_src.z >= abs_src.x && abs_src.z >= abs_src.y)
+    {
+        // Z major axis
+        tc = -src.y;
+        sc = src.z < 0.0 ? -src.x : src.x;
+        ma = 2.0 * src.z;
+        id = src.z < 0.0 ? 5.0 : 4.0;
+    }
+    else if (abs_src.y >= abs_src.x)
+    {
+        // Y major axis
+        tc = src.y < 0.0 ? -src.z : src.z;
+        sc = src.x;
+        ma = 2.0 * src.y;
+        id = src.y < 0.0 ? 3.0 : 2.0;
+    }
+    else
+    {
+        // X major axis
+        tc = -src.y;
+        sc = src.x < 0.0 ? src.z : -src.z;
+        ma = 2.0 * src.x;
+        id = src.x < 0.0 ? 1.0 : 0.0;
+    }
+
+    // Return as per Xbox 360 cube instruction output format:
+    // x = t coordinate
+    // y = s coordinate
+    // z = 2 * major axis
+    // w = face ID
+    return float4(tc, sc, ma, id);
+}
+
+float3 cubeDir(float3 texCoord)
+{
+    // Move from 1...2 to -1...1
+    float sc = (texCoord.x * 2.0) - 3.0;
+    float tc = (texCoord.y * 2.0) - 3.0;
+
+    uint face = uint(clamp(texCoord.z, 0.0, 5.0));
+
+    // Split face into axis and sign
+    uint axis = face >> 1;
+    uint neg = face & 1;
+
+    float3 dir;
+
+    switch(axis)
+    {
+    case 0: // X major axis
+        dir.y = -tc;
+        dir.z = neg ? sc : -sc;
+        dir.x = neg ? -1.0 : 1.0;
+        break;
+
+    case 1: // Y major axis
+        dir.x = sc;
+        dir.z = neg ? -tc : tc;
+        dir.y = neg ? -1.0 : 1.0;
+        break;
+
+    default: // Z major axis
+        dir.x = neg ? -sc : sc;
+        dir.y = -tc;
+        dir.z = neg ? -1.0 : 1.0;
+        break;
+    }
+
+    return dir;
+}
+
+#ifdef __air__
+
+struct Texture2DDescriptorHeap
+{
+    texture2d<float> tex;
+};
+
+struct Texture2DArrayDescriptorHeap
+{
+    texture2d_array<float> tex;
+};
+
+struct TextureCubeDescriptorHeap
+{
+    texturecube<float> tex;
+};
+
+struct SamplerDescriptorHeap
+{
+    sampler samp;
+};
+
+struct AtomicUintBuffer
+{
+    device atomic_uint* buffer;
+};
+
+uint2 getTexture2DDimensions(texture2d<float> texture)
+{
+    return uint2(texture.get_width(), texture.get_height());
+}
+
+uint3 getTexture2DArrayDimensions(texture2d_array<float> texture)
+{
+    return uint3(texture.get_width(), texture.get_height(), texture.get_array_size());
+}
+
+float4 tfetch2D(constant Texture2DDescriptorHeap* textureHeap,
+                constant SamplerDescriptorHeap* samplerHeap,
+                uint resourceDescriptorIndex,
+                uint samplerDescriptorIndex,
+                float2 texCoord, float2 offset)
+{
+    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    return texture.sample(sampler, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(texture));
+}
+
+float4 tfetch1D(constant Texture2DDescriptorHeap* textureHeap,
+                constant SamplerDescriptorHeap* samplerHeap,
+                uint resourceDescriptorIndex,
+                uint samplerDescriptorIndex,
+                float texCoord)
+{
+    return tfetch2D(textureHeap, samplerHeap, resourceDescriptorIndex, samplerDescriptorIndex,
+        float2(texCoord, 0.5), float2(0.0));
+}
+
+float4 tfetch2DArray(constant Texture2DArrayDescriptorHeap* textureHeap,
+                     constant SamplerDescriptorHeap* samplerHeap,
+                     uint resourceDescriptorIndex,
+                     uint samplerDescriptorIndex,
+                     float3 texCoord, float3 offset)
+{
+    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    uint3 dimensions = getTexture2DArrayDimensions(texture);
+    return texture.sample(sampler, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy), uint(texCoord.z * dimensions.z));
+}
+
+float4 tfetchCube(constant TextureCubeDescriptorHeap* textureHeap,
+                  constant SamplerDescriptorHeap* samplerHeap,
+                  uint resourceDescriptorIndex,
+                  uint samplerDescriptorIndex,
+                  float3 texCoord)
+{
+    texturecube<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    float3 dir = cubeDir(texCoord);
+    return texture.sample(sampler, dir);
+}
+
+float4 tfetch2DL(constant Texture2DDescriptorHeap* textureHeap,
+                 constant SamplerDescriptorHeap* samplerHeap,
+                 uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                 float2 texCoord, float2 offset, float lod)
+{
+    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    return texture.sample(sampler, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(texture), level(lod));
+}
+
+float4 tfetch1DL(constant Texture2DDescriptorHeap* textureHeap,
+                 constant SamplerDescriptorHeap* samplerHeap,
+                 uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                 float texCoord, float lod)
+{
+    return tfetch2DL(textureHeap, samplerHeap, resourceDescriptorIndex,
+                     samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0), lod);
+}
+
+float4 tfetch2DArrayL(constant Texture2DArrayDescriptorHeap* textureHeap,
+                      constant SamplerDescriptorHeap* samplerHeap,
+                      uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                      float3 texCoord, float3 offset, float lod)
+{
+    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    uint3 dimensions = getTexture2DArrayDimensions(texture);
+    return texture.sample(sampler, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy),
+                          uint(texCoord.z * dimensions.z), level(lod));
+}
+
+float4 tfetchCubeL(constant TextureCubeDescriptorHeap* textureHeap,
+                   constant SamplerDescriptorHeap* samplerHeap,
+                   uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                   float3 texCoord, float lod)
+{
+    texturecube<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    return texture.sample(sampler, cubeDir(texCoord), level(lod));
+}
+
+float2 getWeights2D(constant Texture2DDescriptorHeap* textureHeap,
+                    constant SamplerDescriptorHeap* samplerHeap,
+                    uint resourceDescriptorIndex,
+                    uint samplerDescriptorIndex,
+                    float2 texCoord, float2 offset)
+{
+    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    return select(fract(texCoord * float2(getTexture2DDimensions(texture)) + offset - 0.5), 0.0, isnan(texCoord));
+}
+
+float getWeights1D(constant Texture2DDescriptorHeap* textureHeap,
+                   constant SamplerDescriptorHeap* samplerHeap,
+                   uint resourceDescriptorIndex,
+                   uint samplerDescriptorIndex,
+                   float texCoord)
+{
+    return getWeights2D(textureHeap, samplerHeap, resourceDescriptorIndex, samplerDescriptorIndex,
+        float2(texCoord, 0.5), float2(0.0)).x;
+}
+
+float3 getWeights2DArray(constant Texture2DArrayDescriptorHeap* textureHeap,
+                         constant SamplerDescriptorHeap* samplerHeap,
+                         uint resourceDescriptorIndex,
+                         uint samplerDescriptorIndex,
+                         float3 texCoord, float3 offset)
+{
+    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    return select(fract(texCoord * float3(getTexture2DArrayDimensions(texture)) + offset - 0.5), 0.0, isnan(texCoord));
+}
+
+#else
+
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
+Texture2DArray<float4> g_Texture2DArrayDescriptorHeap[] : register(t0, space1);
 TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
+
+#ifdef MARATHON_RECOMP
+RWStructuredBuffer<uint> g_ConditionalSurveyBuffer : register(u0, space4);
+#endif
 
 uint2 getTexture2DDimensions(Texture2D<float4> texture)
 {
@@ -59,16 +372,165 @@ uint2 getTexture2DDimensions(Texture2D<float4> texture)
     return dimensions;
 }
 
+uint3 getTexture2DArrayDimensions(Texture2DArray<float4> texture)
+{
+    uint4 dimensions;
+    texture.GetDimensions(0, dimensions.x, dimensions.y, dimensions.z, dimensions.w);
+    return dimensions.xyz;
+}
+
 float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + offset / getTexture2DDimensions(texture));
+    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), 0.0);
+}
+
+float4 tfetch1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord)
+{
+    return tfetch2D(resourceDescriptorIndex, samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0, 0.0));
+}
+
+float4 tfetch2DArray(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
+{
+    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    uint3 dimensions = getTexture2DArrayDimensions(texture);
+    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy, texCoord.z * dimensions.z), 0.0);
+}
+
+float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
+{
+    float3 dir = cubeDir(texCoord);
+    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].SampleLevel(
+        g_SamplerDescriptorHeap[samplerDescriptorIndex], dir, 0.0);
+}
+
+float4 tfetch2DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                 float2 texCoord, float2 offset, float lod)
+{
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+                               texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), lod);
+}
+
+float4 tfetch1DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                 float texCoord, float lod)
+{
+    return tfetch2DL(resourceDescriptorIndex, samplerDescriptorIndex,
+                     float2(texCoord, 0.5), float2(0.0, 0.0), lod);
+}
+
+float4 tfetch2DArrayL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                      float3 texCoord, float3 offset, float lod)
+{
+    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    uint3 dimensions = getTexture2DArrayDimensions(texture);
+    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+                               float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy,
+                                      texCoord.z * dimensions.z), lod);
+}
+
+float4 tfetchCubeL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                   float3 texCoord, float lod)
+{
+    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].SampleLevel(
+        g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeDir(texCoord), lod);
 }
 
 float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
     return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
+}
+
+float getWeights1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord)
+{
+    return getWeights2D(resourceDescriptorIndex, samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0, 0.0)).x;
+}
+
+float3 getWeights2DArray(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
+{
+    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DArrayDimensions(texture) + offset - 0.5));
+}
+
+#endif
+
+#ifdef __air__
+#define selectWrapper(a, b, c) select(c, b, a)
+#else
+#define selectWrapper(a, b, c) select(a, b, c)
+#endif
+
+#ifdef __air__
+#define frac(X) fract(X)
+#define asuint(X) as_type<uint4>(X)
+
+template<typename T>
+void clip(T a)
+{
+    if (a < 0.0) {
+        discard_fragment();
+    }
+}
+
+template<typename T>
+float rcp(T a)
+{
+    return 1.0 / a;
+}
+
+template<typename T>
+float4x4 mul(T a, T b)
+{
+    return b * a;
+}
+#endif
+
+// Xenos RECIP_FF / RSQ_FF ("fast"/flush) scalar ops flush +-Inf to 0 instead of
+// clamping to +-FLT_MAX (the RECIP_CLAMP/RSQ_CLAMP variants) or leaving the raw
+// IEEE result. Matches Xenia's DxbcShaderTranslator (rsqrt(0)/rcp(0) => 0), so a
+// degenerate normalize (length 0) contributes no light rather than exploding to
+// FLT_MAX (root cause of the FM2 main-menu car's flashing polys, VS 4fff9681).
+float rcpFF(float a) { float r = rcp(a); return isinf(r) ? 0.0 : r; }
+float rsqFF(float a) { float r = rsqrt(a); return isinf(r) ? 0.0 : r; }
+
+// Shader Model 3 ALU semantics, matching Xenia's DxbcShaderTranslator
+// (dxbc_translator_alu.cpp). These only differ from a plain op for degenerate
+// operands (+-Inf / NaN, i.e. downstream of a clamped Logc/Rcpc/Rsqc); for
+// finite inputs they are identical to a * b / max / min / dot.
+//   * multiply: +-0 (or denormal) * anything = +0, so 0 * Inf = +0 (not NaN).
+//   * max/min : a>=b?a:b / a<b?a:b (propagate the 2nd operand on NaN, not fmax/fmin).
+float  mulSM3(float  a, float  b) { return selectWrapper(min(abs(a), abs(b)) == 0.0, (float )0.0, a * b); }
+float2 mulSM3(float2 a, float2 b) { return selectWrapper(min(abs(a), abs(b)) == 0.0, (float2)0.0, a * b); }
+float3 mulSM3(float3 a, float3 b) { return selectWrapper(min(abs(a), abs(b)) == 0.0, (float3)0.0, a * b); }
+float4 mulSM3(float4 a, float4 b) { return selectWrapper(min(abs(a), abs(b)) == 0.0, (float4)0.0, a * b); }
+float  maxSM3(float  a, float  b) { return selectWrapper(a >= b, a, b); }
+float2 maxSM3(float2 a, float2 b) { return selectWrapper(a >= b, a, b); }
+float3 maxSM3(float3 a, float3 b) { return selectWrapper(a >= b, a, b); }
+float4 maxSM3(float4 a, float4 b) { return selectWrapper(a >= b, a, b); }
+float  minSM3(float  a, float  b) { return selectWrapper(a <  b, a, b); }
+float2 minSM3(float2 a, float2 b) { return selectWrapper(a <  b, a, b); }
+float3 minSM3(float3 a, float3 b) { return selectWrapper(a <  b, a, b); }
+float4 minSM3(float4 a, float4 b) { return selectWrapper(a <  b, a, b); }
+float dotSM3(float2 a, float2 b) { return mulSM3(a.x, b.x) + mulSM3(a.y, b.y); }
+float dotSM3(float3 a, float3 b) { return mulSM3(a.x, b.x) + mulSM3(a.y, b.y) + mulSM3(a.z, b.z); }
+float dotSM3(float4 a, float4 b) { return mulSM3(a.x, b.x) + mulSM3(a.y, b.y) + mulSM3(a.z, b.z) + mulSM3(a.w, b.w); }
+
+#ifdef __air__
+#define UNROLL
+#define BRANCH
+#else
+#define UNROLL [unroll]
+#define BRANCH [branch]
+#endif
+
+float4 getGradients2D(float2 value)
+{
+#ifdef __air__
+    return float4(dfdx(value.x), dfdy(value.x), dfdx(value.y), dfdy(value.y));
+#else
+    return float4(ddx_coarse(value.x), ddy_coarse(value.x), ddx_coarse(value.y), ddy_coarse(value.y));
+#endif
 }
 
 float w0(float a)
@@ -111,6 +573,46 @@ float h1(float a)
     return 1.0f + w3(a) / (w2(a) + w3(a)) + 0.5f;
 }
 
+#ifdef __air__
+
+float4 tfetch2DBicubic(constant Texture2DDescriptorHeap* textureHeap,
+                       constant SamplerDescriptorHeap* samplerHeap,
+                       uint resourceDescriptorIndex,
+                       uint samplerDescriptorIndex,
+                       float2 texCoord, float2 offset)
+{
+    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
+    uint2 dimensions = getTexture2DDimensions(texture);
+
+    float x = texCoord.x * dimensions.x + offset.x;
+    float y = texCoord.y * dimensions.y + offset.y;
+
+    x -= 0.5f;
+    y -= 0.5f;
+    float px = floor(x);
+    float py = floor(y);
+    float fx = x - px;
+    float fy = y - py;
+
+    float g0x = g0(fx);
+    float g1x = g1(fx);
+    float h0x = h0(fx);
+    float h1x = h1(fx);
+    float h0y = h0(fy);
+    float h1y = h1(fy);
+
+    float4 r =
+        g0(fy) * (g0x * texture.sample(sampler, float2(px + h0x, py + h0y) / float2(dimensions)) +
+              g1x * texture.sample(sampler, float2(px + h1x, py + h0y) / float2(dimensions))) +
+        g1(fy) * (g0x * texture.sample(sampler, float2(px + h0x, py + h1y) / float2(dimensions)) +
+              g1x * texture.sample(sampler, float2(px + h1x, py + h1y) / float2(dimensions)));
+
+    return r;
+}
+
+#else
+
 float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
@@ -143,21 +645,90 @@ float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex
     return r;
 }
 
-float4 tfetch3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
+#endif
+
+// bug-140 (computed LOD): Xenos pixel-shader texture fetches default to
+// UseComputedLOD=true -- implicit-LOD sampling plus the fetch's 1/32-step LOD
+// bias -- but the base tfetch* helpers force SampleLevel(0) (required for
+// vertex shaders, which have no derivatives). These PS-only variants restore
+// the hardware mip selection; XENOS_PS is defined by the recompiler for pixel
+// shaders only, keeping Sample/SampleBias intrinsics out of VS compilations.
+#ifdef XENOS_PS
+#ifdef __air__
+float4 tfetch2DCL(constant Texture2DDescriptorHeap* textureHeap,
+                  constant SamplerDescriptorHeap* samplerHeap,
+                  uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                  float2 texCoord, float2 offset, float lodBias)
 {
-    return g_Texture3DDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
+    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler samp = samplerHeap[samplerDescriptorIndex].samp;
+    return texture.sample(samp, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(texture), bias(lodBias));
 }
 
-struct CubeMapData
+float4 tfetch1DCL(constant Texture2DDescriptorHeap* textureHeap,
+                  constant SamplerDescriptorHeap* samplerHeap,
+                  uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                  float texCoord, float lodBias)
 {
-    float3 cubeMapDirections[2];
-    uint cubeMapIndex;
-};
-
-float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
-{
-    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
+    return tfetch2DCL(textureHeap, samplerHeap, resourceDescriptorIndex,
+                      samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0), lodBias);
 }
+
+float4 tfetch2DArrayCL(constant Texture2DArrayDescriptorHeap* textureHeap,
+                       constant SamplerDescriptorHeap* samplerHeap,
+                       uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                       float3 texCoord, float3 offset, float lodBias)
+{
+    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler samp = samplerHeap[samplerDescriptorIndex].samp;
+    uint3 dimensions = getTexture2DArrayDimensions(texture);
+    return texture.sample(samp, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy),
+                          uint(texCoord.z * dimensions.z), bias(lodBias));
+}
+
+float4 tfetchCubeCL(constant TextureCubeDescriptorHeap* textureHeap,
+                    constant SamplerDescriptorHeap* samplerHeap,
+                    uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                    float3 texCoord, float lodBias)
+{
+    texturecube<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    sampler samp = samplerHeap[samplerDescriptorIndex].samp;
+    return texture.sample(samp, cubeDir(texCoord), bias(lodBias));
+}
+#else
+float4 tfetch2DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                  float2 texCoord, float2 offset, float lodBias)
+{
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return texture.SampleBias(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+                              texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), lodBias);
+}
+
+float4 tfetch1DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                  float texCoord, float lodBias)
+{
+    return tfetch2DCL(resourceDescriptorIndex, samplerDescriptorIndex,
+                      float2(texCoord, 0.5), float2(0.0, 0.0), lodBias);
+}
+
+float4 tfetch2DArrayCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                       float3 texCoord, float3 offset, float lodBias)
+{
+    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    uint3 dimensions = getTexture2DArrayDimensions(texture);
+    return texture.SampleBias(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+                              float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy,
+                                     texCoord.z * dimensions.z), lodBias);
+}
+
+float4 tfetchCubeCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
+                    float3 texCoord, float lodBias)
+{
+    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].SampleBias(
+        g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeDir(texCoord), lodBias);
+}
+#endif
+#endif
 
 float4 tfetchR11G11B10(uint4 value)
 {
@@ -171,22 +742,73 @@ float4 tfetchR11G11B10(uint4 value)
     }
     else
     {
+#ifdef __air__
+        return as_type<float4>(value);
+#else
         return asfloat(value);
+#endif
     }
 }
 
-float4 tfetchTexcoord(uint swappedTexcoords, float4 value, uint semanticIndex)
+float4 unpackUByte4Basis(float4 value)
 {
-    return (swappedTexcoords & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
+    if (g_SpecConstants() & SPEC_CONSTANT_UNPACK_UBYTE4_BASIS)
+        return value * 255.0;
+    return value;
 }
 
-float4 cube(float4 value, inout CubeMapData cubeMapData)
+float4 tfetchPos3N(uint4 value)
 {
-    uint index = cubeMapData.cubeMapIndex;
-    cubeMapData.cubeMapDirections[index] = value.xyz;
-    ++cubeMapData.cubeMapIndex;
-    
-    return float4(0.0, 0.0, 0.0, index);
+    // Raw-integer position stream: bitcast the fetched words back to float.
+    // (.w defaults to 1 from the input assembler for 3-component positions.)
+    // SPEC_CONSTANT_POSITION_F16: the stream is FLOAT16_2/4 -- the IA delivers
+    // zero-extended 16-bit words, so convert each half properly; the 32-bit
+    // bitcast below would produce denormals (~0) and collapse the mesh.
+    // bug-136/137 (2026-07-09, Xenia ucode dump diff): the guest microcode
+    // fetches 16-bit positions with a .yxwz DESTINATION SWIZZLE
+    // ("vfetch_full r1.yxwz ... FMT_16_16_16_16_FLOAT") -- the standard 360
+    // fix-up that undoes the half-order swap of 16-bit components inside
+    // byteswapped 32-bit words. The fork's translator drops all vfetch
+    // attributes; texcoords are patched at runtime via g_SwappedTexcoords but
+    // POSITION had no swap path, so x<->y and z<->w (the per-part dequant
+    // SCALE!) were exchanged -- negative/garbage scales exploded the FM2 car
+    // mesh. Consume the halves in .yxwz order.
+    if (g_SpecConstants() & SPEC_CONSTANT_POSITION_F16)
+    {
+#ifdef __air__
+        float4 position = float4(float(as_type<half>(ushort(value.y))),
+                                 float(as_type<half>(ushort(value.x))),
+                                 float(as_type<half>(ushort(value.w))),
+                                 float(as_type<half>(ushort(value.z))));
+#else
+        float4 position = float4(f16tof32(value.y), f16tof32(value.x),
+                                 f16tof32(value.w), f16tof32(value.z));
+#endif
+        // FLOAT16_2 stream: the IA defaults .zw to (0, 1); undo the swap the
+        // defaults went through and keep the classic (x, y, 0, 1) shape.
+        if (value.z == 0 && value.w == 1)
+        {
+#ifdef __air__
+            position = float4(float(as_type<half>(ushort(value.y))),
+                              float(as_type<half>(ushort(value.x))), 0.0, 1.0);
+#else
+            position = float4(f16tof32(value.y), f16tof32(value.x), 0.0, 1.0);
+#endif
+        }
+        return position;
+    }
+#ifdef __air__
+    float4 position = as_type<float4>(value);
+#else
+    float4 position = asfloat(value);
+#endif
+    position.w = value.w == 1 ? 1.0 : position.w;
+    return position;
+}
+
+float4 swapFloats(uint swappedFloats, float4 value, uint semanticIndex)
+{
+    return (swappedFloats & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
 }
 
 float4 dst(float4 src0, float4 src1)
@@ -204,18 +826,65 @@ float4 max4(float4 src0)
     return max(max(src0.x, src0.y), max(src0.z, src0.w));
 }
 
+#ifdef __air__
+
+float2 getPixelCoord(constant Texture2DDescriptorHeap* textureHeap,
+                     uint resourceDescriptorIndex,
+                     float2 texCoord)
+{
+    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    return (float2)getTexture2DDimensions(texture) * texCoord;
+}
+
+#else
+
 float2 getPixelCoord(uint resourceDescriptorIndex, float2 texCoord)
 {
     return getTexture2DDimensions(g_Texture2DDescriptorHeap[resourceDescriptorIndex]) * texCoord;
 }
 
+#endif
+
 float computeMipLevel(float2 pixelCoord)
 {
+#ifdef __air__
+    float2 dx = dfdx(pixelCoord);
+    float2 dy = dfdy(pixelCoord);
+#else
     float2 dx = ddx(pixelCoord);
     float2 dy = ddy(pixelCoord);
+#endif
     float deltaMaxSqr = max(dot(dx, dx), dot(dy, dy));
     return max(0.0, 0.5 * log2(deltaMaxSqr));
 }
+
+#ifdef __air__
+
+uint atomicLoadUint(device AtomicUintBuffer* buffer, uint index)
+{
+    return atomic_load_explicit(&buffer->buffer[index], memory_order_relaxed);
+}
+
+uint atomicFetchAddUint(device AtomicUintBuffer* buffer, uint index, uint value)
+{
+    return atomic_fetch_add_explicit(&buffer->buffer[index], value, memory_order_relaxed);
+}
+
+#else
+
+uint atomicLoadUint(RWStructuredBuffer<uint> buffer, uint index)
+{
+    return buffer[index];
+}
+
+uint atomicFetchAddUint(RWStructuredBuffer<uint> buffer, uint index, uint value)
+{
+    uint originalValue;
+    InterlockedAdd(buffer[index], value, originalValue);
+    return originalValue;
+}
+
+#endif
 
 #endif
 

@@ -34,6 +34,11 @@ IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixe
             target = L"-T vs_6_0";
     }
 
+    if (!compileLibrary)
+    {
+        args[argCount++] = L"-E shaderMain";
+    }
+
     args[argCount++] = target;
     args[argCount++] = L"-HV 2021";
     args[argCount++] = L"-all-resources-bound";
@@ -56,6 +61,9 @@ IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixe
 
 #ifdef UNLEASHED_RECOMP
     args[argCount++] = L"-DUNLEASHED_RECOMP";
+#endif
+#ifdef MARATHON_RECOMP
+    args[argCount++] = L"-DMARATHON_RECOMP";
 #endif
 
     IDxcResult* result = nullptr;
