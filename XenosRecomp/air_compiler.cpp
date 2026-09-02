@@ -36,10 +36,8 @@ std::vector<uint8_t> AirCompiler::compile(const std::string& shaderSource)
     char sourcePathTemplate[PATH_MAX] = "/tmp/xenos_metal_XXXXXX.metal";
     const int sourceFd = mkstemps(sourcePathTemplate, 6);
     if (sourceFd == -1)
-    {
-        fmt::println("Failed to create temporary file for shader source: {}", strerror(errno));
-        std::exit(1);
-    }
+        throw std::runtime_error(fmt::format(
+            "failed to create temporary shader source: {}", strerror(errno)));
 
     const TemporaryPath sourcePath(sourcePathTemplate);
     const TemporaryPath irPath(sourcePath.path + ".ir");
@@ -47,11 +45,9 @@ std::vector<uint8_t> AirCompiler::compile(const std::string& shaderSource)
 
     const ssize_t sourceWritten = write(sourceFd, shaderSource.data(), shaderSource.size());
     close(sourceFd);
-    if (sourceWritten < 0)
-    {
-        fmt::println("Failed to write shader source to disk: {}", strerror(errno));
-        std::exit(1);
-    }
+    if (sourceWritten < 0 || static_cast<size_t>(sourceWritten) != shaderSource.size())
+        throw std::runtime_error(fmt::format(
+            "failed to write temporary shader source: {}", strerror(errno)));
 
     const char* compileCommand[] = {
         "/usr/bin/xcrun", "-sdk", "macosx", "metal", "-o", irPath.path.c_str(), "-c", sourcePath.path.c_str(), "-Wno-unused-variable", "-frecord-sources", "-gline-tables-only", "-fmetal-math-mode=relaxed", "-D__air__",
@@ -64,21 +60,17 @@ std::vector<uint8_t> AirCompiler::compile(const std::string& shaderSource)
         nullptr
     };
     if (const int compileStatus = executeCommand(compileCommand); compileStatus != 0)
-    {
-        fmt::println("Metal compiler exited with status: {}", compileStatus);
-        fmt::println("Generated source:\n{}", shaderSource);
-        std::exit(1);
-    }
+        throw std::runtime_error(fmt::format("Metal compiler exited with status {}", compileStatus));
 
     const char* linkCommand[] = { "/usr/bin/xcrun", "-sdk", "macosx", "metallib", "-o", metalLibPath.path.c_str(), irPath.path.c_str(), nullptr };
     if (const int linkStatus = executeCommand(linkCommand); linkStatus != 0)
-    {
-        fmt::println("Metal linker exited with status: {}", linkStatus);
-        fmt::println("Generated source:\n{}", shaderSource);
-        std::exit(1);
-    }
+        throw std::runtime_error(fmt::format("Metal linker exited with status {}", linkStatus));
 
     std::ifstream libStream(metalLibPath.path, std::ios::binary);
+    if (!libStream)
+        throw std::runtime_error("failed to open generated Metal library");
     std::vector<uint8_t> data((std::istreambuf_iterator(libStream)), std::istreambuf_iterator<char>());
+    if (data.empty())
+        throw std::runtime_error("generated Metal library is empty");
     return data;
 }

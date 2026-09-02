@@ -34,6 +34,11 @@ def main() -> int:
     counts = {kind: Counter() for kind in AUDITED_OPCODES}
     shader_count = 0
     loop_shader_count = 0
+    structured_else_shader_count = 0
+    nested_branch_shader_count = 0
+    fallback_shader_count = 0
+    unnamed_sampler_shader_count = 0
+    reflected_alias_shader_count = 0
 
     env = os.environ.copy()
     env["XENOS_RECOMP_TRACE"] = "1"
@@ -74,16 +79,56 @@ def main() -> int:
             continue
         body = hlsl[body_offset:]
 
+        if re.search(r"(?m)^\s*else\s*$", body):
+            structured_else_shader_count += 1
+        if re.search(r"(?m)^\t{2,}if \(", body):
+            nested_branch_shader_count += 1
+        if "switch (pc)" in body:
+            fallback_shader_count += 1
+
+        unnamed_samplers = set(
+            re.findall(r"\bs([0-9]|1[0-5])_SamplerDescriptorIndex\b", body)
+        )
+        if unnamed_samplers:
+            unnamed_sampler_shader_count += 1
+            for sampler in unnamed_samplers:
+                definition = rf"(?m)^#define s{sampler}_SamplerDescriptorIndex\b"
+                dxil_field = f"uint s{sampler}_SamplerDescriptorIndex : packoffset("
+                if len(re.findall(definition, hlsl)) < 2 or dxil_field not in hlsl:
+                    failures.append(
+                        f"{shader.name}: unnamed sampler s{sampler} is not defined for all backends"
+                    )
+
+        # This FM2 vertex shader reflects several overlapping Float4 matrix
+        # aliases.  They must share the one physical constant-file declaration
+        # while remaining usable by name in the translated body.
+        if shader.stem == "0191395EEF439898":
+            aliases = ("matWVP", "matWV", "matWInvT", "matW", "matVInv")
+            if hlsl.count("float4 g_VertexShaderConstants[256]") != 1:
+                failures.append(
+                    f"{shader.name}: expected one physical VS Float4 constant declaration"
+                )
+            missing_aliases = [name for name in aliases if f"{name}(" not in body]
+            if missing_aliases:
+                failures.append(
+                    f"{shader.name}: reflected aliases missing from body: {missing_aliases}"
+                )
+            else:
+                reflected_alias_shader_count += 1
+
         loop_starts = cf.count(7)
         loop_ends = cf.count(8)
         emitted_loops = len(re.findall(r"g_LoopConstant\(\d+\)", body))
         emitted_for_loops = len(re.findall(r"for \(uint loopIterator\d+ = 0;", body))
+        fallback_loops = len(re.findall(r"loopIterator\[loopDepth\] = 0;", body))
         if loop_starts or loop_ends:
             loop_shader_count += 1
-        if loop_starts != loop_ends or loop_starts != emitted_loops or loop_starts != emitted_for_loops:
+        if (loop_starts != loop_ends or loop_starts != emitted_loops or
+                loop_starts != emitted_for_loops + fallback_loops):
             failures.append(
                 f"{shader.name}: loop control mismatch start={loop_starts} end={loop_ends} "
-                f"constants={emitted_loops} for_loops={emitted_for_loops}"
+                f"constants={emitted_loops} for_loops={emitted_for_loops} "
+                f"fallback_loops={fallback_loops}"
             )
 
         gradient_fetches = fetch.count(18)
@@ -105,10 +150,25 @@ def main() -> int:
         if unknown:
             failures.append(f"runtime uses unaudited {kind} opcodes: {unknown}")
 
+    for label, count in (
+        ("structured if/else", structured_else_shader_count),
+        ("nested branch", nested_branch_shader_count),
+        ("switch(pc) fallback", fallback_shader_count),
+        ("unnamed sampler fallback", unnamed_sampler_shader_count),
+        ("overlapping reflected aliases", reflected_alias_shader_count),
+    ):
+        if count == 0:
+            failures.append(f"runtime corpus did not exercise {label}")
+
     report = {
         "status": "pass" if not failures else "fail",
         "shader_count": shader_count,
         "loop_shader_count": loop_shader_count,
+        "structured_else_shader_count": structured_else_shader_count,
+        "nested_branch_shader_count": nested_branch_shader_count,
+        "fallback_shader_count": fallback_shader_count,
+        "unnamed_sampler_shader_count": unnamed_sampler_shader_count,
+        "reflected_alias_shader_count": reflected_alias_shader_count,
         "opcode_counts": {
             kind: dict(sorted(counter.items())) for kind, counter in counts.items()
         },

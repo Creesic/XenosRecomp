@@ -1695,6 +1695,28 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     for (uint32_t i = 0; i < 16; i++)
         unreflectedSamplers.emplace(i, 0);
 
+    // Reflection may name a single register inside a wider array. Resolve the
+    // physical register owner once so every backend and ALU operand picks the
+    // same widest declaration; equal spans retain constant-table order.
+    for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
+    {
+        const auto constantInfo = reinterpret_cast<const ConstantInfo*>(
+            constantTableData + constantTableContainer->constantTable.constantInfo + i * sizeof(ConstantInfo));
+        if (constantInfo->registerSet != RegisterSet::Float4)
+            continue;
+
+        for (uint16_t j = 0; j < constantInfo->registerCount; j++)
+        {
+            const uint32_t reg = constantInfo->registerIndex + j;
+            auto owner = float4Constants.find(reg);
+            if (owner == float4Constants.end() ||
+                constantInfo->registerCount > owner->second->registerCount)
+            {
+                float4Constants[reg] = constantInfo;
+            }
+        }
+    }
+
     out += "#ifdef __spirv__\n\n";
     out += "#define LoadVertexShaderConstant(INDEX) vk::RawBufferLoad<float4>(g_PushConstants.VertexShaderConstants + min(uint(INDEX), 255u) * 16, 0x10)\n";
     out += "#define LoadPixelShaderConstant(INDEX) vk::RawBufferLoad<float4>(g_PushConstants.PixelShaderConstants + min(uint(INDEX), 223u) * 16, 0x10)\n\n";
@@ -1747,9 +1769,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     constantName, shaderName, constantInfo->registerIndex * 16);
             }
             
-            for (uint16_t j = 0; j < constantInfo->registerCount; j++)
-                float4Constants.emplace(constantInfo->registerIndex + j, constantInfo);
-
             break;
         }
 
@@ -1831,9 +1850,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 println("#define {} (*(reinterpret_cast<device float4*>(g_PushConstants.{}ShaderConstants + {})))",
                     constantName, shaderName, constantInfo->registerIndex * 16);
             }
-
-            for (uint16_t j = 0; j < constantInfo->registerCount; j++)
-                float4Constants.emplace(constantInfo->registerIndex + j, constantInfo);
 
             break;
         }
@@ -1990,8 +2006,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         if (constantInfo->registerSet == RegisterSet::Bool)
         {
             const char* constantName = reinterpret_cast<const char*>(constantTableData + constantInfo->name);
-            println("#define {} (1 << {})", constantName, constantInfo->registerIndex + (isPixelShader ? 16 : 0));
-            boolConstants.emplace(constantInfo->registerIndex, constantName);
+            const uint32_t address = constantInfo->registerIndex + (isPixelShader ? 128u : 0u);
+            println("#define {} BOOL_BIT({})", constantName, address);
+            boolConstants.emplace(address, constantName);
         }
     }
 
@@ -2468,7 +2485,17 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     uint32_t instrAddress = 0;
     uint32_t instrSize = shader->size;
     bool simpleControlFlow = true;
-    bool hasLoops = false;
+
+    enum class CfKind : uint8_t { None, Cond, Uncond, LoopStart, LoopEnd };
+    struct CfSummary
+    {
+        CfKind kind = CfKind::None;
+        uint32_t target = 0;
+    };
+    std::vector<CfSummary> cfSummaries;
+    std::vector<uint32_t> loopStarts;
+    std::unordered_map<uint32_t, uint32_t> loopEndFor;
+    uint32_t cfIndex = 0;
 
     while (instrAddress < instrSize)
     {
@@ -2488,7 +2515,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             case ControlFlowOpcode::CondCall:
             case ControlFlowOpcode::Return:
             case ControlFlowOpcode::MarkVsFetchDone:
-                continue;
+                break;
 
             case ControlFlowOpcode::Exec:
             case ControlFlowOpcode::ExecEnd:
@@ -2508,34 +2535,154 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 break;
 
             case ControlFlowOpcode::LoopStart:
+                loopStarts.push_back(cfIndex);
+                cfSummaries.push_back({ CfKind::LoopStart, 0 });
+                break;
+
             case ControlFlowOpcode::LoopEnd:
-                hasLoops = true;
-                continue;
+                if (loopStarts.empty())
+                    simpleControlFlow = false;
+                else
+                {
+                    loopEndFor[loopStarts.back()] = cfIndex;
+                    loopStarts.pop_back();
+                }
+                cfSummaries.push_back({ CfKind::LoopEnd, 0 });
+                break;
 
             case ControlFlowOpcode::CondJmp:
             {
-                if (cfInstr.condJmp.isUnconditional || cfInstr.condJmp.direction)
+                if (cfInstr.condJmp.direction || cfInstr.condJmp.address <= cfIndex)
                     simpleControlFlow = false;
-                else
-                    ++ifEndLabels[cfInstr.condJmp.address];
+
+                cfSummaries.push_back({
+                    cfInstr.condJmp.isUnconditional ? CfKind::Uncond : CfKind::Cond,
+                    uint32_t(cfInstr.condJmp.address) });
 
                 break;
             }
             }
 
+            if (cfSummaries.size() == cfIndex)
+                cfSummaries.push_back({});
+
             if (address != 0)
                 instrSize = std::min<uint32_t>(instrSize, address * 12);
+
+            ++cfIndex;
         }
 
         controlFlowCode += 3;
         instrAddress += 12;
     }
 
+    if (!loopStarts.empty())
+        simpleControlFlow = false;
+
+    if (simpleControlFlow)
+    {
+        const uint32_t instrCount = (instrSize / 12) * 2;
+        if (cfSummaries.size() > instrCount)
+            cfSummaries.resize(instrCount);
+
+        std::function<bool(uint32_t, uint32_t, uint32_t)> structure =
+            [&](uint32_t lo, uint32_t hi, uint32_t cont) -> bool
+        {
+            uint32_t i = lo;
+            while (i < hi)
+            {
+                const CfSummary& summary = cfSummaries[i];
+                switch (summary.kind)
+                {
+                case CfKind::Uncond:
+                    if (i + 1 == hi && (summary.target == cont || summary.target == hi))
+                        i = hi;
+                    else
+                        return false;
+                    break;
+
+                case CfKind::Cond:
+                {
+                    const uint32_t target = summary.target;
+                    if (target > hi)
+                    {
+                        if (target != cont)
+                            return false;
+                        ++ifEndLabels[hi];
+                        if (!structure(i + 1, hi, cont))
+                            return false;
+                        i = hi;
+                    }
+                    else if (target < hi && target - 1 > i &&
+                        cfSummaries[target - 1].kind == CfKind::Uncond &&
+                        cfSummaries[target - 1].target != target)
+                    {
+                        const uint32_t merge = cfSummaries[target - 1].target;
+                        if (merge == cont || merge == hi)
+                        {
+                            elseLabels.insert(target);
+                            ++ifEndLabels[hi];
+                            if (!structure(i + 1, target - 1, merge == cont ? cont : hi) ||
+                                !structure(target, hi, cont))
+                                return false;
+                            i = hi;
+                        }
+                        else if (merge < hi)
+                        {
+                            elseLabels.insert(target);
+                            ++ifEndLabels[merge];
+                            if (!structure(i + 1, target - 1, merge) ||
+                                !structure(target, merge, merge))
+                                return false;
+                            i = merge;
+                        }
+                        else
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        ++ifEndLabels[target];
+                        if (!structure(i + 1, target, target == hi ? cont : target))
+                            return false;
+                        i = target;
+                    }
+                    break;
+                }
+
+                case CfKind::LoopStart:
+                {
+                    auto loopEnd = loopEndFor.find(i);
+                    if (loopEnd == loopEndFor.end() || loopEnd->second >= hi ||
+                        !structure(i + 1, loopEnd->second, loopEnd->second))
+                        return false;
+                    i = loopEnd->second + 1;
+                    break;
+                }
+
+                case CfKind::LoopEnd:
+                    return false;
+
+                default:
+                    ++i;
+                    break;
+                }
+            }
+            return true;
+        };
+
+        simpleControlFlow = structure(0, instrCount, instrCount);
+    }
+
+    if (!simpleControlFlow)
+    {
+        ifEndLabels.clear();
+        elseLabels.clear();
+    }
+
     if (trace)
         fmt::println(stderr, "trace: control-flow scan done simple={} instr_size={}", simpleControlFlow, instrSize);
-
-    if (hasLoops && !simpleControlFlow)
-        throw std::runtime_error("mixed loop and arbitrary PC control flow is not supported");
 
     if (simpleControlFlow)
     {
@@ -2545,6 +2692,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     else
     {
         out += "\n\tuint pc = 0;\n";
+        out += "\tuint loopDepth = 0;\n";
+        out += "\tuint4 loopIterator = 0;\n";
+        out += "\tuint4 loopCount = 0;\n";
+        out += "\tint4 loopStartAddress = 0;\n";
+        out += "\tint4 loopStep = 0;\n";
         out += "\twhile (true)\n";
         out += "\t{\n";
         out += "\t\tswitch (pc)\n";
@@ -2589,6 +2741,17 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         }
                     }
                 }
+                if (elseLabels.count(pc) != 0)
+                {
+                    --indentation;
+                    indent();
+                    out += "}\n";
+                    indent();
+                    out += "else\n";
+                    indent();
+                    out += "{\n";
+                    ++indentation;
+                }
             }
 
             ++pc;
@@ -2629,29 +2792,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 sequence = cfInstr.condExec.sequence;
                 shouldReturn = (cfInstr.opcode == ControlFlowOpcode::CondExecEnd ||
                                 cfInstr.opcode == ControlFlowOpcode::CondExecPredCleanEnd);
-                // bug-139 (2026-07-10, found diffing vs the Xenia-edge dump): these four
-                // opcodes execute their block ONLY when the referenced BOOLEAN constant
-                // matches `condition` -- but no guard was emitted, so mutually-exclusive
-                // cexec b/!b variant pairs (34 FM2 shaders, incl. the car PS's
-                // cexec b130/!b130 material paths) BOTH executed and the second
-                // clobbered the first. Emit the same g_Booleans test the CondJmp fix
-                // (2026-07-04) uses, incl. the raw-register fallback mapping
-                // (pixel bit = boolAddress - 128 + 16 = boolAddress - 112).
+                // CondExec addresses the unified VS 0..127 / PS 128..255 Xenos
+                // boolean file. Keep the raw address visible in generated HLSL.
                 indent();
-                auto findResult = boolConstants.find(cfInstr.condExec.boolAddress);
-                if (findResult != boolConstants.end())
-                {
-                    println("if ((g_Booleans & {}) {}= 0)", findResult->second,
-                        cfInstr.condExec.condition ? "!" : "=");
-                }
-                else
-                {
-                    const uint32_t boolBit = isPixelShader
-                        ? (uint32_t(cfInstr.condExec.boolAddress) - 112u)
-                        : uint32_t(cfInstr.condExec.boolAddress);
-                    println("if ((g_Booleans & (1u << {})) {}= 0)", boolBit,
-                        cfInstr.condExec.condition ? "!" : "=");
-                }
+                println("if ({}BOOL_BIT({}))", cfInstr.condExec.condition ? "" : "!",
+                    uint32_t(cfInstr.condExec.boolAddress));
                 indent();
                 out += "{\n";
                 ++indentation;
@@ -2695,6 +2840,23 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     indent();
                     println("aL = (loopAddress{} << 22) >> 22;", depth);
                 }
+                else
+                {
+                    indent();
+                    println("uint loopConstant = g_LoopConstant({});", uint32_t(cfInstr.loopStart.loopId));
+                    indent();
+                    out += "loopIterator[loopDepth] = 0;\n";
+                    indent();
+                    out += "loopCount[loopDepth] = loopConstant & 0xFFu;\n";
+                    indent();
+                    out += "loopStartAddress[loopDepth] = int((loopConstant >> 8) & 0xFFu);\n";
+                    indent();
+                    out += "loopStep[loopDepth] = int(loopConstant << 8) >> 24;\n";
+                    indent();
+                    out += "aL = (loopStartAddress[loopDepth] << 22) >> 22;\n";
+                    indent();
+                    out += "++loopDepth;\n";
+                }
                 break;
 
             case ControlFlowOpcode::LoopEnd:
@@ -2721,15 +2883,64 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         out += "}\n";
                     }
                 }
+                else
+                {
+                    indent();
+                    out += "uint loopIndex = loopDepth - 1u;\n";
+                    if (cfInstr.loopEnd.isPredicatedBreak)
+                    {
+                        indent();
+                        println("if ({}p0)", cfInstr.loopEnd.condition ? "" : "!");
+                        indent();
+                        out += "{\n";
+                        ++indentation;
+                        indent();
+                        out += "--loopDepth;\n";
+                        --indentation;
+                        indent();
+                        out += "}\n";
+                        indent();
+                        out += "else\n";
+                        indent();
+                        out += "{\n";
+                        ++indentation;
+                    }
+                    indent();
+                    out += "++loopIterator[loopIndex];\n";
+                    indent();
+                    out += "if (loopIterator[loopIndex] < loopCount[loopIndex])\n";
+                    indent();
+                    out += "{\n";
+                    ++indentation;
+                    indent();
+                    out += "aL = ((int(loopIterator[loopIndex]) * loopStep[loopIndex] + loopStartAddress[loopIndex]) << 22) >> 22;\n";
+                    indent();
+                    println("pc = {};", uint32_t(cfInstr.loopEnd.address));
+                    indent();
+                    out += "continue;\n";
+                    --indentation;
+                    indent();
+                    out += "}\n";
+                    indent();
+                    out += "--loopDepth;\n";
+                    if (cfInstr.loopEnd.isPredicatedBreak)
+                    {
+                        --indentation;
+                        indent();
+                        out += "}\n";
+                    }
+                }
                 break;
 
             case ControlFlowOpcode::CondJmp:
             {
                 if (cfInstr.condJmp.isUnconditional)
                 {
-                    assert(!simpleControlFlow);
-                    println("\t\t\tpc = {};", uint32_t(cfInstr.condJmp.address));
-                    out += "\t\t\tcontinue;\n";
+                    if (!simpleControlFlow)
+                    {
+                        println("\t\t\tpc = {};", uint32_t(cfInstr.condJmp.address));
+                        out += "\t\t\tcontinue;\n";
+                    }
                 }
                 else
                 {
@@ -2740,26 +2951,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     }
                     else
                     {
-                        auto findResult = boolConstants.find(cfInstr.condJmp.boolAddress);
-                        if (findResult != boolConstants.end())
-                            println("if ((g_Booleans & {}) {}= 0)", findResult->second, cfInstr.condJmp.condition ^ simpleControlFlow ? "!" : "=");
-                        else
-                        {
-                            // FM2 fix (2026-07-04): pixel-shader bool CondJmps reference the raw
-                            // Xenos bool register (PS base 128), which never matches the D3DX
-                            // registerIndex-keyed boolConstants map, so this fallback always fires
-                            // for them. The prior hardcoded if(false)/if(true) dead-code-eliminated
-                            // conditional texture-stage fetches (e.g. FM2's g_TextureStageEnabled[8]
-                            // bool array gating 8 tfetch -> whole shader collapsed to flat color).
-                            // Derive the g_Booleans bit directly, matching the bool #define
-                            // (bit = registerIndex + (pixel?16:0); registerIndex = boolAddress -
-                            // (pixel?128:0)  =>  pixel bit = boolAddress - 112).
-                            uint32_t boolBit = isPixelShader
-                                ? (uint32_t(cfInstr.condJmp.boolAddress) - 112u)
-                                : uint32_t(cfInstr.condJmp.boolAddress);
-                            println("if ((g_Booleans & (1u << {})) {}= 0)", boolBit,
-                                cfInstr.condJmp.condition ^ simpleControlFlow ? "!" : "=");
-                        }
+                        const bool jumpIfSet = cfInstr.condJmp.condition ^ simpleControlFlow;
+                        println("if ({}BOOL_BIT({}))", jumpIfSet ? "" : "!",
+                            uint32_t(cfInstr.condJmp.boolAddress));
                     }
 
                     if (simpleControlFlow)

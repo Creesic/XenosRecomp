@@ -194,12 +194,11 @@ def main() -> int:
             truth = not negated
             if opcode == "cjmp" and not direct_pc_loop:
                 truth = not truth
-            bit = address - (112 if stage == "frag" else 0)
-            expected_bool_guards.append((bit, "!=" if truth else "=="))
+            expected_bool_guards.append((address, truth))
         actual_bool_guards = [
-            (int(bit), comparison)
-            for bit, comparison in re.findall(
-                r"if \(\(g_Booleans & \(1u << (\d+)\)\) ([!=]=) 0\)", body
+            (int(address), not bool(negated))
+            for negated, address in re.findall(
+                r"if \((!?)BOOL_BIT\((\d+)\)\)", body
             )
         ]
         if actual_bool_guards != expected_bool_guards:
@@ -253,6 +252,19 @@ def main() -> int:
         if actual_fetches != expected_fetches:
             fail(oracle.name, "texture fetch routing", expected_fetches, actual_fetches)
         metrics["texture_fetches"] += len(expected_fetches)
+
+        # Cube consumes src1.  The second disassembly operand is the source
+        # whose register swizzle must reach cube() unchanged.
+        expected_cube_sources = []
+        for line in disasm.splitlines():
+            text = strip_disasm_prefix(line)
+            match = re.match(r"cube\s+\S+,\s*(r\d+\.[xyzw]+),", text)
+            if match:
+                expected_cube_sources.append(match.group(1))
+        actual_cube_sources = re.findall(r"\bcube\((r\d+\.[xyzw]+)\)", body)
+        if actual_cube_sources != expected_cube_sources:
+            fail(oracle.name, "cube src1 swizzles", expected_cube_sources, actual_cube_sources)
+        metrics["cube_src1_swizzles"] += len(expected_cube_sources)
 
         register_lod_count = disasm.count("UseRegisterLOD=true")
         explicit_lod_calls = len(re.findall(r"=\s*tfetch(?:1D|2D|2DArray|Cube)L\(", body))

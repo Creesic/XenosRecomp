@@ -41,23 +41,23 @@ struct PushConstants
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
 
-#define g_Booleans                  vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
-#define g_SwappedTexcoords          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
-#define g_SwappedNormals            vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 264)
-#define g_SwappedBinormals          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 268)
-#define g_SwappedTangents           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 272)
-#define g_SwappedBlendWeights       vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 276)
-#define g_HalfPixelOffset           vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 280)
-#define g_ClipPlane                 vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 288)
-#define g_ClipPlaneEnabled          vk::RawBufferLoad<bool>(g_PushConstants.SharedConstants + 304)
-#define g_AlphaThreshold            vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 308)
-#define g_conditionalSurveyIndex    vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 312)
-#define g_conditionalRenderingIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 316)
+#define g_BooleanWord(INDEX)        vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256 + uint(INDEX) * 4)
+#define g_SwappedTexcoords          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 288)
+#define g_SwappedNormals            vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 292)
+#define g_SwappedBinormals          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 296)
+#define g_SwappedTangents           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 300)
+#define g_SwappedBlendWeights       vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 304)
+#define g_HalfPixelOffset           vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 308)
+#define g_ClipPlane                 vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 320)
+#define g_ClipPlaneEnabled          vk::RawBufferLoad<bool>(g_PushConstants.SharedConstants + 336)
+#define g_AlphaThreshold            vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 340)
+#define g_conditionalSurveyIndex    vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 344)
+#define g_conditionalRenderingIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 348)
 // bug-140: Xenos PA_CL_VTE_CNTL vertex-export modes, mirrored from Xenia's
 // xe_flags (bit1<<1=XY already divided by W, bit2=Z divided by W, bit3=W is W
 // not 1/W). Default 8 = standard homogeneous output (no-op tail).
-#define g_VteFlags vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 320)
-#define g_LoopConstant(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 324 + uint(INDEX) * 4)
+#define g_VteFlags vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 352)
+#define g_LoopConstant(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 356 + uint(INDEX) * 4)
 
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
 
@@ -84,44 +84,47 @@ struct PushConstants
     ulong SharedConstants;
 };
 
-#define g_Booleans (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 256)))
-#define g_SwappedTexcoords (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 260)))
-#define g_SwappedNormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 264)))
-#define g_SwappedBinormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 268)))
-#define g_SwappedTangents (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 272)))
-#define g_SwappedBlendWeights (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 276)))
-#define g_HalfPixelOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 280)))
-#define g_ClipPlane (*(reinterpret_cast<device float4*>(g_PushConstants.SharedConstants + 288)))
-#define g_ClipPlaneEnabled (*(reinterpret_cast<device bool*>(g_PushConstants.SharedConstants + 304)))
-#define g_AlphaThreshold (*(reinterpret_cast<device float*>(g_PushConstants.SharedConstants + 308)))
-#define g_conditionalSurveyIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 312)))
-#define g_conditionalRenderingIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 316)))
-#define g_VteFlags (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 320)))
-#define g_LoopConstant(INDEX) (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 324 + uint(INDEX) * 4)))
+#define g_BooleanWord(INDEX) (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 256 + uint(INDEX) * 4)))
+#define g_SwappedTexcoords (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 288)))
+#define g_SwappedNormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 292)))
+#define g_SwappedBinormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 296)))
+#define g_SwappedTangents (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 300)))
+#define g_SwappedBlendWeights (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 304)))
+#define g_HalfPixelOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 308)))
+#define g_ClipPlane (*(reinterpret_cast<device float4*>(g_PushConstants.SharedConstants + 320)))
+#define g_ClipPlaneEnabled (*(reinterpret_cast<device bool*>(g_PushConstants.SharedConstants + 336)))
+#define g_AlphaThreshold (*(reinterpret_cast<device float*>(g_PushConstants.SharedConstants + 340)))
+#define g_conditionalSurveyIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 344)))
+#define g_conditionalRenderingIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 348)))
+#define g_VteFlags (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 352)))
+#define g_LoopConstant(INDEX) (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 356 + uint(INDEX) * 4)))
 
 #else
 
 #define DEFINE_SHARED_CONSTANTS() \
-    uint g_Booleans : packoffset(c16.x); \
-    uint g_SwappedTexcoords : packoffset(c16.y); \
-    uint g_SwappedNormals : packoffset(c16.z); \
-    uint g_SwappedBinormals : packoffset(c16.w); \
-    uint g_SwappedTangents : packoffset(c17.x);  \
-    uint g_SwappedBlendWeights : packoffset(c17.y); \
-    float2 g_HalfPixelOffset : packoffset(c17.z); \
-    float4 g_ClipPlane : packoffset(c18.x); \
-    bool g_ClipPlaneEnabled : packoffset(c19.x); \
-    float g_AlphaThreshold : packoffset(c19.y); \
-    uint g_conditionalSurveyIndex : packoffset(c19.z); \
-    uint g_conditionalRenderingIndex : packoffset(c19.w); \
-    uint4 g_VteAndLoopConstants[9] : packoffset(c20);
+    uint4 g_BooleanWords[2] : packoffset(c16); \
+    uint g_SwappedTexcoords : packoffset(c18.x); \
+    uint g_SwappedNormals : packoffset(c18.y); \
+    uint g_SwappedBinormals : packoffset(c18.z); \
+    uint g_SwappedTangents : packoffset(c18.w);  \
+    uint g_SwappedBlendWeights : packoffset(c19.x); \
+    float2 g_HalfPixelOffset : packoffset(c19.y); \
+    float4 g_ClipPlane : packoffset(c20.x); \
+    bool g_ClipPlaneEnabled : packoffset(c21.x); \
+    float g_AlphaThreshold : packoffset(c21.y); \
+    uint g_conditionalSurveyIndex : packoffset(c21.z); \
+    uint g_conditionalRenderingIndex : packoffset(c21.w); \
+    uint4 g_VteAndLoopConstants[9] : packoffset(c22);
 
+#define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
 #define g_LoopConstant(INDEX) g_VteAndLoopConstants[(uint(INDEX) + 1u) >> 2][(uint(INDEX) + 1u) & 3u]
 
 uint g_SpecConstants();
 
 #endif
+
+#define BOOL_BIT(ADDRESS) ((g_BooleanWord(uint(ADDRESS) >> 5u) & (1u << (uint(ADDRESS) & 31u))) != 0u)
 
 float4 cube(float4 value)
 {

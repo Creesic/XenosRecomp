@@ -13,20 +13,81 @@
 static std::unique_ptr<uint8_t[]> readAllBytes(const char* filePath, size_t& fileSize)
 {
     FILE* file = fopen(filePath, "rb");
-    fseek(file, 0, SEEK_END);
-    fileSize = ftell(file);
-    fseek(file, 0, SEEK_SET);
+    if (file == nullptr)
+        throw std::runtime_error(fmt::format("failed to open {}", filePath));
+
+    if (fseek(file, 0, SEEK_END) != 0)
+    {
+        fclose(file);
+        throw std::runtime_error(fmt::format("failed to seek {}", filePath));
+    }
+
+    const long end = ftell(file);
+    if (end < 0 || fseek(file, 0, SEEK_SET) != 0)
+    {
+        fclose(file);
+        throw std::runtime_error(fmt::format("failed to size {}", filePath));
+    }
+
+    fileSize = static_cast<size_t>(end);
     auto data = std::make_unique<uint8_t[]>(fileSize);
-    fread(data.get(), 1, fileSize, file);
+    if (fileSize != 0 && fread(data.get(), 1, fileSize, file) != fileSize)
+    {
+        fclose(file);
+        throw std::runtime_error(fmt::format("failed to read {}", filePath));
+    }
     fclose(file);
     return data;
 }
 
 static void writeAllBytes(const char* filePath, const void* data, size_t dataSize)
 {
-    FILE* file = fopen(filePath, "wb");
-    fwrite(data, 1, dataSize, file);
-    fclose(file);
+    const std::filesystem::path destination(filePath);
+    std::filesystem::path temporary = destination;
+    temporary += ".tmp";
+
+    FILE* file = fopen(temporary.string().c_str(), "wb");
+    if (file == nullptr)
+        throw std::runtime_error(fmt::format("failed to open {}", temporary.string()));
+
+    const bool wrote = dataSize == 0 || fwrite(data, 1, dataSize, file) == dataSize;
+    const bool flushed = fflush(file) == 0;
+    const bool closed = fclose(file) == 0;
+    if (!wrote || !flushed || !closed)
+    {
+        std::filesystem::remove(temporary);
+        throw std::runtime_error(fmt::format("failed to write {}", temporary.string()));
+    }
+
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), destination.c_str(),
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        const DWORD error = GetLastError();
+        std::filesystem::remove(temporary);
+        throw std::runtime_error(fmt::format("failed to replace {} (Win32 error {})", filePath, error));
+    }
+#else
+    std::error_code error;
+    std::filesystem::rename(temporary, destination, error);
+    if (error)
+    {
+        std::filesystem::remove(temporary);
+        throw std::runtime_error(fmt::format("failed to replace {}: {}", filePath, error.message()));
+    }
+#endif
+}
+
+static std::vector<uint8_t> compressBytes(const std::vector<uint8_t>& input, int level)
+{
+    std::vector<uint8_t> output(ZSTD_compressBound(input.size()));
+    const size_t outputSize = ZSTD_compress(
+        output.data(), output.size(), input.data(), input.size(), level);
+    if (ZSTD_isError(outputSize))
+        throw std::runtime_error(fmt::format("zstd compression failed: {}", ZSTD_getErrorName(outputSize)));
+
+    output.resize(outputSize);
+    return output;
 }
 
 static bool tryGetShaderContainerSize(const uint8_t* data, size_t fileSize, size_t offset, size_t& dataSize)
@@ -67,10 +128,18 @@ struct RecompiledShader
     std::vector<uint8_t> air;
     uint32_t specConstantsMask = 0;
     bool failed = false;
+    std::string failure;
+
+    ~RecompiledShader()
+    {
+        if (dxil != nullptr)
+            dxil->Release();
+    }
 };
 
 static bool tryRecompile(ShaderRecompiler& recompiler, const uint8_t* data, const std::string_view include)
 {
+#ifdef _WIN32
     __try
     {
         recompiler.recompile(data, include);
@@ -80,6 +149,10 @@ static bool tryRecompile(ShaderRecompiler& recompiler, const uint8_t* data, cons
     {
         return false;
     }
+#else
+    recompiler.recompile(data, include);
+    return true;
+#endif
 }
 
 void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::string& filename, const std::string_view include, std::atomic<uint32_t>& progress, uint32_t numShaders)
@@ -91,7 +164,7 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
         if (!tryRecompile(recompiler, shader.data, include))
         {
             shader.failed = true;
-            fmt::println(stderr, "Skipping shader {:016X} from {}: structured exception in recompiler", hash, filename);
+            shader.failure = "structured exception in recompiler";
             ++progress;
             return;
         }
@@ -105,14 +178,14 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
         if (shader.dxil == nullptr)
         {
             shader.failed = true;
-            fmt::println(stderr, "Skipping shader {:016X} from {}: DXIL compilation failed", hash, filename);
+            shader.failure = "DXIL compilation failed";
             ++progress;
             return;
         }
         if (*(reinterpret_cast<uint32_t *>(shader.dxil->GetBufferPointer()) + 1) == 0)
         {
             shader.failed = true;
-            fmt::println(stderr, "Skipping shader {:016X} from {}: DXIL was not signed", hash, filename);
+            shader.failure = "DXIL was not signed";
             shader.dxil->Release();
             shader.dxil = nullptr;
             ++progress;
@@ -122,13 +195,15 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
 
 #ifdef XENOS_RECOMP_AIR
         shader.air = AirCompiler::compile(recompiler.out);
+        if (shader.air.empty())
+            throw std::runtime_error("AIR compilation produced no output");
 #endif
 
         IDxcBlob* spirv = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false, true);
         if (spirv == nullptr)
         {
             shader.failed = true;
-            fmt::println(stderr, "Skipping shader {:016X} from {}: SPIR-V compilation failed", hash, filename);
+            shader.failure = "SPIR-V compilation failed";
             ++progress;
             return;
         }
@@ -138,7 +213,7 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
         {
             spirv->Release();
             shader.failed = true;
-            fmt::println(stderr, "Skipping shader {:016X} from {}: SPIR-V compression failed", hash, filename);
+            shader.failure = "SPIR-V compression failed";
             ++progress;
             return;
         }
@@ -148,24 +223,30 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
     catch (const std::exception& e)
     {
         shader.failed = true;
-        fmt::println(stderr, "Skipping shader {:016X} from {}: {}", hash, filename, e.what());
+        shader.failure = e.what();
         ++progress;
         return;
     }
     catch (...)
     {
         shader.failed = true;
-        fmt::println(stderr, "Skipping shader {:016X} from {}: unknown recompilation failure", hash, filename);
+        shader.failure = "unknown recompilation failure";
         ++progress;
         return;
     }
 
     size_t currentProgress = ++progress;
-    if ((currentProgress % 10) == 0 || (currentProgress == numShaders - 1))
+    if ((currentProgress % 10) == 0 || currentProgress == numShaders)
         fmt::println("Recompiling shaders... {}%", currentProgress / float(numShaders) * 100.0f);
 }
 
-static uint32_t dumpHlslShaders(const char* input, const char* output, const std::string_view include)
+struct DumpResult
+{
+    uint32_t dumped = 0;
+    uint32_t failed = 0;
+};
+
+static DumpResult dumpHlslShaders(const char* input, const char* output, const std::string_view include)
 {
     std::filesystem::create_directories(output);
 
@@ -184,7 +265,7 @@ static uint32_t dumpHlslShaders(const char* input, const char* output, const std
     }
 
     std::map<XXH64_hash_t, bool> dumpedShaders;
-    uint32_t dumpedCount = 0;
+    DumpResult result;
 
     for (auto& inputFile : inputFiles)
     {
@@ -201,14 +282,27 @@ static uint32_t dumpHlslShaders(const char* input, const char* output, const std
                 if (dumpedShaders.find(hash) == dumpedShaders.end())
                 {
                     ShaderRecompiler recompiler;
-                    recompiler.recompile(fileData.get() + i, include);
+                    if (!tryRecompile(recompiler, fileData.get() + i, include))
+                    {
+                        fmt::println(stderr, "Failed to dump shader {:016X} from {}: structured exception",
+                            hash, inputFile.string());
+                        ++result.failed;
+                        i += dataSize;
+                        continue;
+                    }
 
                     std::filesystem::path outputPath = output;
                     outputPath /= fmt::format("{:016X}.hlsl", hash);
-                    writeAllBytes(outputPath.string().c_str(), recompiler.out.data(), recompiler.out.size());
+                    std::string contents = fmt::format(
+                        "// Source: {}\n// Stage: {}\n// Hash: 0x{:016X}\n// Specialization mask: 0x{:08X}\n\n",
+                        inputFile.filename().generic_string(),
+                        recompiler.isPixelShader ? "pixel" : "vertex", hash,
+                        recompiler.specConstantsMask);
+                    contents += recompiler.out;
+                    writeAllBytes(outputPath.string().c_str(), contents.data(), contents.size());
 
                     dumpedShaders.emplace(hash, true);
-                    ++dumpedCount;
+                    ++result.dumped;
                 }
 
                 i += dataSize;
@@ -222,10 +316,10 @@ static uint32_t dumpHlslShaders(const char* input, const char* output, const std
         }
     }
 
-    return dumpedCount;
+    return result;
 }
 
-int main(int argc, char** argv)
+static int runMain(int argc, char** argv)
 {
 #ifndef XENOS_RECOMP_INPUT
     if (argc < 4)
@@ -248,9 +342,9 @@ int main(int argc, char** argv)
         auto includeData = readAllBytes(argv[4], includeSize);
         std::string_view include(reinterpret_cast<const char*>(includeData.get()), includeSize);
 
-        uint32_t dumpedCount = dumpHlslShaders(argv[2], argv[3], include);
-        fmt::println("Dumped {} HLSL shaders", dumpedCount);
-        return 0;
+        const DumpResult result = dumpHlslShaders(argv[2], argv[3], include);
+        fmt::println("Dumped {} HLSL shaders", result.dumped);
+        return result.failed == 0 && result.dumped != 0 ? 0 : 1;
     }
 
     const char* input =
@@ -339,6 +433,12 @@ int main(int argc, char** argv)
                 files.emplace_back(std::move(fileData));
         }
 
+        if (shaders.empty())
+        {
+            fmt::println(stderr, "No shader containers found in {}", input);
+            return 2;
+        }
+
         std::mutex shaderQueueMutex;
         std::deque<XXH64_hash_t> shaderQueue;
         for (const auto& [hash, _] : shaders)
@@ -376,6 +476,21 @@ int main(int argc, char** argv)
             thread.join();
         }
 
+        size_t failureCount = 0;
+        for (const auto& [hash, shader] : shaders)
+        {
+            if (!shader.failed)
+                continue;
+            ++failureCount;
+            fmt::println(stderr, "  {:016X} {}: {}", hash, shaderFilenames[hash], shader.failure);
+        }
+        if (failureCount != 0)
+        {
+            fmt::println(stderr, "Failed to compile {} of {} shaders; cache was not replaced",
+                failureCount, shaders.size());
+            return 2;
+        }
+
         fmt::println("Creating shader cache...");
 
         StringBuffer f;
@@ -389,11 +504,6 @@ int main(int argc, char** argv)
 
         for (auto& [hash, shader] : shaders)
         {
-            if (shader.failed)
-            {
-                continue;
-            }
-
             const std::string& fullFilename = shaderFilenames[hash];
             std::string filename = fullFilename;
             size_t shaderPos = filename.find("shader");
@@ -429,8 +539,7 @@ int main(int argc, char** argv)
         int level = ZSTD_maxCLevel();
 
 #ifdef XENOS_RECOMP_DXIL
-        std::vector<uint8_t> dxilCompressed(ZSTD_compressBound(dxil.size()));
-        dxilCompressed.resize(ZSTD_compress(dxilCompressed.data(), dxilCompressed.size(), dxil.data(), dxil.size(), level));
+        const std::vector<uint8_t> dxilCompressed = compressBytes(dxil, level);
 
         f.print("const uint8_t g_compressedDxilCache[] = {{");
 
@@ -445,8 +554,7 @@ int main(int argc, char** argv)
 #ifdef XENOS_RECOMP_AIR
         fmt::println("Compressing AIR cache...");
 
-        std::vector<uint8_t> airCompressed(ZSTD_compressBound(air.size()));
-        airCompressed.resize(ZSTD_compress(airCompressed.data(), airCompressed.size(), air.data(), air.size(), level));
+        const std::vector<uint8_t> airCompressed = compressBytes(air, level);
 
         f.print("const uint8_t g_compressedAirCache[] = {{");
 
@@ -460,8 +568,7 @@ int main(int argc, char** argv)
 
         fmt::println("Compressing SPIRV cache...");
 
-        std::vector<uint8_t> spirvCompressed(ZSTD_compressBound(spirv.size()));
-        spirvCompressed.resize(ZSTD_compress(spirvCompressed.data(), spirvCompressed.size(), spirv.data(), spirv.size(), level));
+        const std::vector<uint8_t> spirvCompressed = compressBytes(spirv, level);
 
         f.print("const uint8_t g_compressedSpirvCache[] = {{");
 
@@ -493,4 +600,17 @@ int main(int argc, char** argv)
     }
 
     return 0;
+}
+
+int main(int argc, char** argv)
+{
+    try
+    {
+        return runMain(argc, argv);
+    }
+    catch (const std::exception& e)
+    {
+        fmt::println(stderr, "XenosRecomp failed: {}", e.what());
+        return 1;
+    }
 }

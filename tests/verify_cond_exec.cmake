@@ -18,10 +18,10 @@ file(READ "${OUTPUT}" hlsl)
 # C197FD225DAC819C. Its mutually-exclusive `cexec b130` and `cexec !b130`
 # blocks must each be guarded. Running both blocks unconditionally makes the
 # second texture path overwrite the first.
-string(REGEX MATCHALL "if \\(\\(g_Booleans &" cond_exec_guards "${hlsl}")
+string(REGEX MATCHALL "if \\(!?BOOL_BIT\\(130\\)\\)" cond_exec_guards "${hlsl}")
 list(LENGTH cond_exec_guards cond_exec_guard_count)
 if(cond_exec_guard_count LESS 2)
     message(FATAL_ERROR
-        "Expected two g_Booleans CondExec guards for b130, found "
+        "Expected two unified BOOL_BIT CondExec guards for b130, found "
         "${cond_exec_guard_count}")
 endif()

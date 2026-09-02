@@ -18,11 +18,13 @@
 #include <cstring>
 #include <execution>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <smolv.h>
 #include <fmt/core.h>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <xxhash.h>

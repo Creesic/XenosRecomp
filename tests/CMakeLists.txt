@@ -60,6 +60,16 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_loop_control_flow.cmake"
 )
 
+add_test(
+    NAME generic_dump_and_fail_closed
+    COMMAND ${CMAKE_COMMAND}
+        "-DXENOS_RECOMP=$<TARGET_FILE:XenosRecomp>"
+        "-DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/data/F7DDC03EFA734623.bin"
+        "-DSHADER_COMMON=${PROJECT_SOURCE_DIR}/XenosRecomp/shader_common.h"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generic_integration"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_generic_integration.cmake"
+)
+
 find_program(PYTHON_EXECUTABLE NAMES python python3)
 set(FM2_ORACLE_DIR "${PROJECT_SOURCE_DIR}/Sampleshaders/Xenos_shaders/FM2")
 if(PYTHON_EXECUTABLE AND EXISTS "${FM2_ORACLE_DIR}")
