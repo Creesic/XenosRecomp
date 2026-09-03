@@ -12,6 +12,9 @@
 // tfetchPos3N must convert with f16tof32 -- the 32-bit bitcast used for FLOAT
 // streams turns half bits into denormals (~0) and the mesh collapses.
 #define SPEC_CONSTANT_POSITION_F16 (1 << 7)
+// PGR4: POSITION0 is SHORT4/USHORT4 (k_16_16_16_16, integer flag): the IA
+// delivers sign/zero-extended integers, convert instead of bitcasting.
+#define SPEC_CONSTANT_POSITION_INT16 (1 << 8)
 
 #ifdef UNLEASHED_RECOMP
     #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)
@@ -47,6 +50,9 @@ struct PushConstants
 #define g_SwappedBinormals          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 296)
 #define g_SwappedTangents           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 300)
 #define g_SwappedBlendWeights       vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 304)
+#define g_PackedTexcoordsLo         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 484)
+#define g_PackedTexcoordsHi         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 488)
+#define g_PackedBasis               vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 492)
 #define g_HalfPixelOffset           vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 308)
 #define g_NdcScale                  vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 496)
 #define g_NdcOffset                 vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 504)
@@ -92,6 +98,9 @@ struct PushConstants
 #define g_SwappedBinormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 296)))
 #define g_SwappedTangents (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 300)))
 #define g_SwappedBlendWeights (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 304)))
+#define g_PackedTexcoordsLo (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 484)))
+#define g_PackedTexcoordsHi (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 488)))
+#define g_PackedBasis (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 492)))
 #define g_HalfPixelOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 308)))
 #define g_NdcScale (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 496)))
 #define g_NdcOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 504)))
@@ -124,6 +133,11 @@ struct PushConstants
 
 #define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
+// PGR4 packed vertex modes live in the trailing padding of the loop-constant
+// array (offsets 484/488/492 = dwords 33-35).
+#define g_PackedTexcoordsLo g_VteAndLoopConstants[8].y
+#define g_PackedTexcoordsHi g_VteAndLoopConstants[8].z
+#define g_PackedBasis g_VteAndLoopConstants[8].w
 #define g_LoopConstant(INDEX) g_VteAndLoopConstants[(uint(INDEX) + 1u) >> 2][(uint(INDEX) + 1u) & 3u]
 
 uint g_SpecConstants();
@@ -806,6 +820,12 @@ float4 tfetchPos3N(uint4 value)
         }
         return position;
     }
+    if (g_SpecConstants() & SPEC_CONSTANT_POSITION_INT16)
+    {
+        // Same .yxwz half-order fix-up as the FLOAT16 path; the game scales
+        // these integers with its own constants.
+        return float4(float(int(value.y)), float(int(value.x)), float(int(value.w)), float(int(value.z)));
+    }
 #ifdef __air__
     float4 position = as_type<float4>(value);
 #else
@@ -818,6 +838,62 @@ float4 tfetchPos3N(uint4 value)
 float4 swapFloats(uint swappedFloats, float4 value, uint semanticIndex)
 {
     return (swappedFloats & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
+}
+
+// PGR4 (2026-09-03): vertex element formats the host input assembler cannot
+// convert (Xenos k_10_11_11 / k_11_11_10 / k_2_10_10_10 in unorm, uint and
+// snorm flavours). The host feeds such elements as a raw uint (R32_UINT) and
+// publishes a 4-bit mode per input here; mode 0 is a passthrough.
+//   mode = 1 + family * 3 + kind
+//   family: 0 = 10:11:11 (x 11 bits low), 1 = 11:11:10 (x 10 bits low), 2 = 2:10:10:10
+//   kind:   0 = unorm, 1 = uint, 2 = snorm
+float unpackSnormField(uint bits, uint width)
+{
+    int v = int(bits << (32u - width)) >> (32u - width);
+    return max(float(v) / float((1u << (width - 1u)) - 1u), -1.0);
+}
+
+float4 unpackVertexMode(uint mode, float4 value)
+{
+    if (mode == 0u)
+        return value;
+#ifdef __air__
+    uint b = as_type<uint>(value.x);
+#else
+    uint b = asuint(value.x);
+#endif
+    uint family = (mode - 1u) / 3u;
+    uint kind = (mode - 1u) % 3u;
+    uint w0 = family == 0u ? 11u : 10u;
+    uint w1 = family == 2u ? 10u : 11u;
+    uint w2 = family == 1u ? 11u : 10u;
+    uint x = b & ((1u << w0) - 1u);
+    uint y = (b >> w0) & ((1u << w1) - 1u);
+    uint z = (b >> (w0 + w1)) & ((1u << w2) - 1u);
+    uint w = b >> 30u;
+    float4 r;
+    if (kind == 0u)
+        r = float4(float(x) / float((1u << w0) - 1u), float(y) / float((1u << w1) - 1u),
+                   float(z) / float((1u << w2) - 1u), family == 2u ? float(w) / 3.0 : 1.0);
+    else if (kind == 1u)
+        r = float4(float(x), float(y), float(z), family == 2u ? float(w) : 1.0);
+    else
+        r = float4(unpackSnormField(x, w0), unpackSnormField(y, w1), unpackSnormField(z, w2),
+                   family == 2u ? unpackSnormField(w, 2u) : 1.0);
+    return r;
+}
+
+float4 unpackTexcoord(uint lo, uint hi, float4 value, uint semanticIndex)
+{
+    uint mode = semanticIndex < 8u ? (lo >> (semanticIndex * 4u)) & 0xFu
+                                   : (hi >> ((semanticIndex - 8u) * 4u)) & 0xFu;
+    return unpackVertexMode(mode, value);
+}
+
+// slot: normal 0-1 -> 0-1, tangent 0-1 -> 2-3, binormal 0-1 -> 4-5
+float4 unpackBasis(uint word, uint slot, float4 value)
+{
+    return unpackVertexMode((word >> (slot * 4u)) & 0xFu, value);
 }
 
 float4 dst(float4 src0, float4 src1)

@@ -351,12 +351,32 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             out += "tfetchPos3N(";
             // bug-127: the helper reads the F16-position spec constant; mark
             // the shader as responsive to it so the host builds the variant.
-            specConstantsMask |= SPEC_CONSTANT_POSITION_F16;
+            specConstantsMask |= SPEC_CONSTANT_POSITION_F16 | SPEC_CONSTANT_POSITION_INT16;
         }
         if (byteBasis)
         {
             out += "unpackUByte4Basis(";
             specConstantsMask |= SPEC_CONSTANT_UNPACK_UBYTE4_BASIS;
+        }
+
+        // PGR4: host-published per-input packed-format modes (see
+        // unpackVertexMode in shader_common.h); mode 0 is a passthrough.
+        switch (vertexElement->usage)
+        {
+        case DeclUsage::Normal:
+            print("unpackBasis(g_PackedBasis, {}u, ", std::min<uint32_t>(usageIndex, 1));
+            break;
+        case DeclUsage::Tangent:
+            print("unpackBasis(g_PackedBasis, {}u, ", 2 + std::min<uint32_t>(usageIndex, 1));
+            break;
+        case DeclUsage::Binormal:
+            print("unpackBasis(g_PackedBasis, {}u, ", 4 + std::min<uint32_t>(usageIndex, 1));
+            break;
+        case DeclUsage::TexCoord:
+            print("unpackTexcoord(g_PackedTexcoordsLo, g_PackedTexcoordsHi, ");
+            break;
+        default:
+            break;
         }
 
         switch (vertexElement->usage)
@@ -394,8 +414,12 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         case DeclUsage::Normal:
         case DeclUsage::Tangent:
         case DeclUsage::Binormal:
-        case DeclUsage::BlendWeight:
+            print(", {}))", usageIndex);  // closes swapFloats and unpackBasis
+            break;
         case DeclUsage::TexCoord:
+            print(", {0}), {0})", usageIndex);  // closes swapFloats and unpackTexcoord
+            break;
+        case DeclUsage::BlendWeight:
             print(", {})", usageIndex);
             break;
         }
