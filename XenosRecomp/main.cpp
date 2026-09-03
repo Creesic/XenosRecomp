@@ -1,3 +1,4 @@
+#include <fstream>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -137,16 +138,37 @@ struct RecompiledShader
     }
 };
 
-static bool tryRecompile(ShaderRecompiler& recompiler, const uint8_t* data, const std::string_view include)
+#ifdef _WIN32
+struct SehInfo
+{
+    uint32_t code = 0;
+    uintptr_t address = 0;     // faulting instruction, relative to the module base
+    uintptr_t dataAddress = 0; // for access violations: the address touched
+};
+
+static int sehFilter(EXCEPTION_POINTERS* ep, SehInfo* info)
+{
+    const EXCEPTION_RECORD* record = ep->ExceptionRecord;
+    info->code = record->ExceptionCode;
+    info->address = reinterpret_cast<uintptr_t>(record->ExceptionAddress) -
+                    reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    info->dataAddress = record->NumberParameters >= 2 ? uintptr_t(record->ExceptionInformation[1]) : 0;
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
+static bool tryRecompile(ShaderRecompiler& recompiler, const uint8_t* data, const std::string_view include, std::string& failure)
 {
 #ifdef _WIN32
+    SehInfo info;
     __try
     {
         recompiler.recompile(data, include);
         return true;
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
+    __except (sehFilter(GetExceptionInformation(), &info))
     {
+        failure = fmt::format("structured exception 0x{:08X} at module+0x{:X} (data 0x{:X})", info.code, info.address, info.dataAddress);
         return false;
     }
 #else
@@ -159,12 +181,13 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
 {
     try
     {
-        thread_local ShaderRecompiler recompiler;
-        recompiler = {};
-        if (!tryRecompile(recompiler, shader.data, include))
+        // PGR4 (2026-09-03): a fresh recompiler per shader. Reusing the
+        // thread-local instance carried state across shaders and faulted on
+        // one PGR4 vertex shader that compiles fine on its own.
+        ShaderRecompiler recompiler;
+        if (!tryRecompile(recompiler, shader.data, include, shader.failure))
         {
             shader.failed = true;
-            shader.failure = "structured exception in recompiler";
             ++progress;
             return;
         }
@@ -179,6 +202,8 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
         {
             shader.failed = true;
             shader.failure = "DXIL compilation failed";
+            // PGR4 diagnostics: keep the HLSL DXC rejected next to the cache output.
+            std::ofstream(fmt::format("failed_{:016X}.hlsl", hash), std::ios::binary).write(recompiler.out.data(), recompiler.out.size());
             ++progress;
             return;
         }
@@ -282,7 +307,8 @@ static DumpResult dumpHlslShaders(const char* input, const char* output, const s
                 if (dumpedShaders.find(hash) == dumpedShaders.end())
                 {
                     ShaderRecompiler recompiler;
-                    if (!tryRecompile(recompiler, fileData.get() + i, include))
+                    std::string failure;
+                    if (!tryRecompile(recompiler, fileData.get() + i, include, failure))
                     {
                         fmt::println(stderr, "Failed to dump shader {:016X} from {}: structured exception",
                             hash, inputFile.string());
@@ -474,6 +500,27 @@ static int runMain(int argc, char** argv)
         for (auto& thread : threads)
         {
             thread.join();
+        }
+
+        // PGR4 (2026-09-03): a few shaders fail only when compiled alongside
+        // others (one PGR4 vertex shader trips a structured exception or hands
+        // DXC corrupted HLSL under concurrency, yet compiles cleanly alone or
+        // single-threaded; ASan finds nothing). Retry the failures serially so
+        // the cache stays complete while that is chased.
+        // ponytail: serial retry hides the race; find it if the retry list grows.
+        {
+            size_t retried = 0;
+            for (auto& [hash, shader] : shaders)
+            {
+                if (!shader.failed)
+                    continue;
+                shader.failed = false;
+                shader.failure.clear();
+                ++retried;
+                recompileShader(shader, hash, shaderFilenames[hash], include, progress, shaders.size());
+            }
+            if (retried != 0)
+                fmt::println("Retried {} shaders serially", retried);
         }
 
         size_t failureCount = 0;
