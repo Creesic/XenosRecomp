@@ -50,6 +50,7 @@ struct PushConstants
 #define g_SwappedBinormals          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 296)
 #define g_SwappedTangents           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 300)
 #define g_SwappedBlendWeights       vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 304)
+#define g_SwappedPositions          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 316)
 #define g_PackedTexcoordsLo         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 484)
 #define g_PackedTexcoordsHi         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 488)
 #define g_PackedBasis               vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 492)
@@ -98,6 +99,7 @@ struct PushConstants
 #define g_SwappedBinormals (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 296)))
 #define g_SwappedTangents (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 300)))
 #define g_SwappedBlendWeights (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 304)))
+#define g_SwappedPositions (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 316)))
 #define g_PackedTexcoordsLo (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 484)))
 #define g_PackedTexcoordsHi (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 488)))
 #define g_PackedBasis (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 492)))
@@ -122,6 +124,7 @@ struct PushConstants
     uint g_SwappedTangents : packoffset(c18.w);  \
     uint g_SwappedBlendWeights : packoffset(c19.x); \
     float2 g_HalfPixelOffset : packoffset(c19.y); \
+    uint g_SwappedPositions : packoffset(c19.w); \
     float4 g_ClipPlane : packoffset(c20.x); \
     bool g_ClipPlaneEnabled : packoffset(c21.x); \
     float g_AlphaThreshold : packoffset(c21.y); \
@@ -857,9 +860,19 @@ float4 unpackVertexMode(uint mode, float4 value)
 {
     if (mode == 0u)
         return value;
+    // 10 / 11: integer 16-bit (SHORT / USHORT) elements. The input assembler
+    // sign/zero-extends them into the float register unconverted.
 #ifdef __air__
+    if (mode == 10u)
+        return float4(as_type<int4>(value));
+    if (mode == 11u)
+        return float4(as_type<uint4>(value));
     uint b = as_type<uint>(value.x);
 #else
+    if (mode == 10u)
+        return float4(asint(value));
+    if (mode == 11u)
+        return float4(asuint(value));
     uint b = asuint(value.x);
 #endif
     uint family = (mode - 1u) / 3u;

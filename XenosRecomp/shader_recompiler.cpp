@@ -375,6 +375,12 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         case DeclUsage::TexCoord:
             print("unpackTexcoord(g_PackedTexcoordsLo, g_PackedTexcoordsHi, ");
             break;
+        case DeclUsage::Position:
+            // PGR4: POSITION1..3 carry a per-draw FLOAT16 matrix; same
+            // half-order fix-up as tfetchPos3N gives POSITION0.
+            if (usageIndex > 0)
+                print("swapFloats(g_SwappedPositions, ");
+            break;
         default:
             break;
         }
@@ -421,6 +427,10 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             break;
         case DeclUsage::BlendWeight:
             print(", {})", usageIndex);
+            break;
+        case DeclUsage::Position:
+            if (usageIndex > 0)
+                print(", {})", usageIndex);
             break;
         }
 

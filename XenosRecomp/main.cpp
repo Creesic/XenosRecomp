@@ -510,17 +510,20 @@ static int runMain(int argc, char** argv)
         // ponytail: serial retry hides the race; find it if the retry list grows.
         {
             size_t retried = 0;
-            for (auto& [hash, shader] : shaders)
+            for (int attempt = 0; attempt < 4; ++attempt)
             {
-                if (!shader.failed)
-                    continue;
-                shader.failed = false;
-                shader.failure.clear();
-                ++retried;
-                recompileShader(shader, hash, shaderFilenames[hash], include, progress, shaders.size());
+                for (auto& [hash, shader] : shaders)
+                {
+                    if (!shader.failed)
+                        continue;
+                    shader.failed = false;
+                    shader.failure.clear();
+                    ++retried;
+                    recompileShader(shader, hash, shaderFilenames[hash], include, progress, shaders.size());
+                }
             }
             if (retried != 0)
-                fmt::println("Retried {} shaders serially", retried);
+                fmt::println("Retried {} shader compilations serially", retried);
         }
 
         size_t failureCount = 0;
