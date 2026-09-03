@@ -3,6 +3,7 @@
 
 #define SPEC_CONSTANT_R11G11B10_NORMAL   (1 << 0)
 #define SPEC_CONSTANT_ALPHA_TEST         (1 << 1)
+#define SPEC_CONSTANT_REVERSE_Z          (1 << 4)
 // Set when the bound vertex declaration packs the tangent basis as unnormalized
 // UBYTE4 (delivered as R8G8B8A8_UNORM, i.e. v/255). The guest microcode decodes
 // it with v*(1/127)-1 expecting the raw 0..255 byte, so scale back up by 255.
@@ -16,7 +17,6 @@
 #ifdef UNLEASHED_RECOMP
     #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)
     #define SPEC_CONSTANT_ALPHA_TO_COVERAGE (1 << 3)
-    #define SPEC_CONSTANT_REVERSE_Z         (1 << 4)
 #endif
 
 #ifdef MARATHON_RECOMP

@@ -3155,6 +3155,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     out += "\tif ((g_VteFlags & 2u) != 0u) output.oPos.xy *= output.oPos.w;\n";
                     out += "\tif ((g_VteFlags & 4u) != 0u) output.oPos.z *= output.oPos.w;\n";
                     out += "\tif (g_ClipPlaneEnabled) output.clipDistance = dot(output.oPos, g_ClipPlane);\n";
+                #if defined(UNLEASHED_RECOMP)
+                    if (!hasMtxProjection)
+                #endif
+                    {
+                        specConstantsMask |= SPEC_CONSTANT_REVERSE_Z;
+                        out += "\tif (g_SpecConstants() & SPEC_CONSTANT_REVERSE_Z) output.oPos.z = output.oPos.w - output.oPos.z;\n";
+                    }
                     out += "\toutput.oPos.xy += g_HalfPixelOffset * output.oPos.w;\n";
                 }
 

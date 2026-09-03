@@ -15,9 +15,10 @@ foreach(reference
         "LoadVertexShaderConstant(60 + a0)"
         "LoadVertexShaderConstant(61 + a0)"
         "LoadVertexShaderConstant(62 + a0)"
-        "LoadVertexShaderConstant(63 + a0)")
+        "LoadVertexShaderConstant(63 + a0)"
+        "if (g_SpecConstants() & SPEC_CONSTANT_REVERSE_Z) output.oPos.z = output.oPos.w - output.oPos.z;")
     string(FIND "${hlsl}" "${reference}" reference_pos)
     if(reference_pos EQUAL -1)
-        message(FATAL_ERROR "Relative constant address was dropped: ${reference}")
+        message(FATAL_ERROR "Expected HLSL fragment missing: ${reference}")
     endif()
 endforeach()
