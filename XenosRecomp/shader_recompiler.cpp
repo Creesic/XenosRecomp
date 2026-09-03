@@ -3169,6 +3169,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     out += "\tif ((g_VteFlags & 2u) != 0u) output.oPos.xy *= output.oPos.w;\n";
                     out += "\tif ((g_VteFlags & 4u) != 0u) output.oPos.z *= output.oPos.w;\n";
                     out += "\tif (g_ClipPlaneEnabled) output.clipDistance = dot(output.oPos, g_ClipPlane);\n";
+                    // PGR4 (2026-09-03): with PA_CL_VTE_CNTL viewport scale/offset disabled the
+                    // guest emits window coordinates; map them to NDC here (Xenia ndc_scale /
+                    // ndc_offset). Identity while the viewport is enabled.
+                    out += "\toutput.oPos.xy = output.oPos.xy * g_NdcScale + g_NdcOffset * output.oPos.w;\n";
                     out += "\toutput.oPos.xy += g_HalfPixelOffset * output.oPos.w;\n";
                 }
 

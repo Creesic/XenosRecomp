@@ -48,6 +48,8 @@ struct PushConstants
 #define g_SwappedTangents           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 300)
 #define g_SwappedBlendWeights       vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 304)
 #define g_HalfPixelOffset           vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 308)
+#define g_NdcScale                  vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 496)
+#define g_NdcOffset                 vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 504)
 #define g_ClipPlane                 vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 320)
 #define g_ClipPlaneEnabled          vk::RawBufferLoad<bool>(g_PushConstants.SharedConstants + 336)
 #define g_AlphaThreshold            vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 340)
@@ -91,6 +93,8 @@ struct PushConstants
 #define g_SwappedTangents (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 300)))
 #define g_SwappedBlendWeights (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 304)))
 #define g_HalfPixelOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 308)))
+#define g_NdcScale (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 496)))
+#define g_NdcOffset (*(reinterpret_cast<device float2*>(g_PushConstants.SharedConstants + 504)))
 #define g_ClipPlane (*(reinterpret_cast<device float4*>(g_PushConstants.SharedConstants + 320)))
 #define g_ClipPlaneEnabled (*(reinterpret_cast<device bool*>(g_PushConstants.SharedConstants + 336)))
 #define g_AlphaThreshold (*(reinterpret_cast<device float*>(g_PushConstants.SharedConstants + 340)))
@@ -114,7 +118,9 @@ struct PushConstants
     float g_AlphaThreshold : packoffset(c21.y); \
     uint g_conditionalSurveyIndex : packoffset(c21.z); \
     uint g_conditionalRenderingIndex : packoffset(c21.w); \
-    uint4 g_VteAndLoopConstants[9] : packoffset(c22);
+    uint4 g_VteAndLoopConstants[9] : packoffset(c22); \
+    float2 g_NdcScale : packoffset(c31.x); \
+    float2 g_NdcOffset : packoffset(c31.z);
 
 #define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
