@@ -204,7 +204,14 @@ static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
     { DeclUsage::Normal, 0 },
     { DeclUsage::Normal, 1 },
     { DeclUsage::Normal, 2 },
-    { DeclUsage::Normal, 3 }
+    { DeclUsage::Normal, 3 },
+    // PGR4 (2026-09-02): its lighting shaders pass TANGENT0/1 between stages
+    // (DXC "no member named iTangent0/1 in Interpolators" on 50 of 922
+    // shaders). Same extension as NORMAL above.
+    { DeclUsage::Tangent, 0 },
+    { DeclUsage::Tangent, 1 },
+    { DeclUsage::Tangent, 2 },
+    { DeclUsage::Tangent, 3 }
 };
 
 static constexpr std::string_view TEXTURE_DIMENSIONS[] = 
@@ -1986,16 +1993,23 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     for (uint32_t samplerIndex = 16; samplerIndex < 32; samplerIndex++)
     {
         uint32_t aliasedSamplerIndex = samplerIndex & 15;
-        println("#define s{}_Texture1DDescriptorIndex s{}_Texture2DDescriptorIndex",
-            samplerIndex, aliasedSamplerIndex);
+        // PGR4 (2026-09-02): vertex texture fetches alias s16-31 onto s0-15, but
+        // a reflected sampler is only declared under its constant-table name, so
+        // the alias must resolve to that name (DXC "undeclared s0_/s2_..." in
+        // ~150 vertex shaders whose tables name their vertex textures).
+        std::string aliasedName = fmt::format("s{}", aliasedSamplerIndex);
+        if (auto it = samplers.find(aliasedSamplerIndex); it != samplers.end())
+            aliasedName = it->second;
+        println("#define s{}_Texture1DDescriptorIndex {}_Texture2DDescriptorIndex",
+            samplerIndex, aliasedName);
         for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
         {
-            println("#define s{}_Texture{}DescriptorIndex s{}_Texture{}DescriptorIndex",
-                samplerIndex, TEXTURE_DIMENSIONS[j], aliasedSamplerIndex, TEXTURE_DIMENSIONS[j]);
+            println("#define s{}_Texture{}DescriptorIndex {}_Texture{}DescriptorIndex",
+                samplerIndex, TEXTURE_DIMENSIONS[j], aliasedName, TEXTURE_DIMENSIONS[j]);
         }
 
-        println("#define s{}_SamplerDescriptorIndex s{}_SamplerDescriptorIndex",
-            samplerIndex, aliasedSamplerIndex);
+        println("#define s{}_SamplerDescriptorIndex {}_SamplerDescriptorIndex",
+            samplerIndex, aliasedName);
     }
 
     for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)

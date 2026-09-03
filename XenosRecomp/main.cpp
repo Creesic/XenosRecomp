@@ -484,11 +484,13 @@ static int runMain(int argc, char** argv)
             ++failureCount;
             fmt::println(stderr, "  {:016X} {}: {}", hash, shaderFilenames[hash], shader.failure);
         }
+        // PGR4 (2026-09-02): a shader that fails to translate/compile is left
+        // out of the cache instead of vetoing it -- the runtime misses on that
+        // hash and dumps it again, everything else gets accelerated.
         if (failureCount != 0)
         {
-            fmt::println(stderr, "Failed to compile {} of {} shaders; cache was not replaced",
+            fmt::println(stderr, "Skipping {} of {} shaders that failed to compile",
                 failureCount, shaders.size());
-            return 2;
         }
 
         fmt::println("Creating shader cache...");
@@ -504,6 +506,8 @@ static int runMain(int argc, char** argv)
 
         for (auto& [hash, shader] : shaders)
         {
+            if (shader.failed)
+                continue;
             const std::string& fullFilename = shaderFilenames[hash];
             std::string filename = fullFilename;
             size_t shaderPos = filename.find("shader");
