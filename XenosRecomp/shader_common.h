@@ -57,6 +57,7 @@ struct PushConstants
 #define g_HalfPixelOffset           vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 308)
 #define g_NdcScale                  vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 496)
 #define g_NdcOffset                 vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 504)
+#define g_IndexedPosition(INDEX)    vk::RawBufferLoad<uint4>(g_PushConstants.SharedConstants + 576 + uint(INDEX) * 16)
 #define g_ClipPlane                 vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 320)
 #define g_ClipPlaneEnabled          vk::RawBufferLoad<bool>(g_PushConstants.SharedConstants + 336)
 #define g_AlphaThreshold            vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 340)
@@ -132,7 +133,10 @@ struct PushConstants
     uint g_conditionalRenderingIndex : packoffset(c21.w); \
     uint4 g_VteAndLoopConstants[9] : packoffset(c22); \
     float2 g_NdcScale : packoffset(c31.x); \
-    float2 g_NdcOffset : packoffset(c31.z);
+    float2 g_NdcOffset : packoffset(c31.z); \
+    uint4 g_IndexedPositions[3] : packoffset(c36);
+
+#define g_IndexedPosition(INDEX) g_IndexedPositions[INDEX]
 
 #define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
@@ -865,13 +869,44 @@ float4 swapFloats(uint swappedFloats, float4 value, uint semanticIndex)
     return (swappedFloats & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
 }
 
-// PGR4 EXPERIMENT: instance-matrix rows (POSITION1+). Same half-order fix-up,
-// but the 4th half is dropped -- see the crowd analysis in the transfer notes.
-float4 swapInstanceRow(uint swappedFloats, float4 value, uint semanticIndex)
+#ifndef __air__
+ByteAddressBuffer g_IndexedPosition1 : register(t0, space4);
+ByteAddressBuffer g_IndexedPosition2 : register(t1, space4);
+ByteAddressBuffer g_IndexedPosition3 : register(t2, space4);
+
+// Declaration-controlled POSITION1..3 fetches. The upload path swaps each
+// guest DWORD, so packed half-floats are ordered high half first.
+// metadata: stride, remaining buffer bytes, Xenos format, element byte offset.
+float4 loadIndexedPosition(ByteAddressBuffer buffer, uint4 metadata, float index)
 {
-    float4 swapped = swapFloats(swappedFloats, value, semanticIndex);
-    return float4(swapped.xyz, 0.0);
+    uint format = metadata.z;
+    uint bytes = format == 0x1Fu || format == 0x24u ? 4u :
+                 format == 0x20u || format == 0x25u ? 8u :
+                 format == 0x39u ? 12u : format == 0x26u ? 16u : 0u;
+    if (bytes == 0u || metadata.w > metadata.y ||
+        bytes > metadata.y - metadata.w || (asuint(index) & 0x7FFFFFFFu) >= 0x7F800000u || index < 0.0)
+        return 0.0;
+    // Check before multiplication/conversion: root SRVs have no hardware bounds.
+    if (metadata.x != 0u && index > float((metadata.y - metadata.w - bytes) / max(metadata.x, 1u)))
+        return 0.0;
+    uint address = metadata.w + (metadata.x != 0u ? uint(index) * metadata.x : 0u);
+    if (format == 0x1Fu)
+    {
+        uint word = buffer.Load(address);
+        return float4(f16tof32(word >> 16u), f16tof32(word & 0xFFFFu), 0.0, 1.0);
+    }
+    if (format == 0x20u)
+    {
+        uint2 words = buffer.Load2(address);
+        return float4(f16tof32(words.x >> 16u), f16tof32(words.x & 0xFFFFu),
+                      f16tof32(words.y >> 16u), f16tof32(words.y & 0xFFFFu));
+    }
+    if (format == 0x24u) return float4(asfloat(buffer.Load(address)), 0.0, 0.0, 1.0);
+    if (format == 0x25u) return float4(asfloat(buffer.Load2(address)), 0.0, 1.0);
+    if (format == 0x39u) return float4(asfloat(buffer.Load3(address)), 1.0);
+    return asfloat(buffer.Load4(address));
 }
+#endif
 
 // PGR4 (2026-09-03): vertex element formats the host input assembler cannot
 // convert (Xenos k_10_11_11 / k_11_11_10 / k_2_10_10_10 in unorm, uint and

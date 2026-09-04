@@ -320,6 +320,23 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
                     uint32_t(vertexElement->usageIndex));
         out += "float4(0.0, 0.0, 0.0, 0.0)";
     }
+    else if (vertexElement->usage == DeclUsage::Position &&
+             uint32_t(vertexElement->usageIndex) >= 1u &&
+             uint32_t(vertexElement->usageIndex) <= 3u &&
+             (instr.srcRegister != 0u || instr.srcSwizzle != 0u))
+    {
+        if (instr.srcRegisterAm)
+            throw std::runtime_error("relative register addressing in indexed position fetch");
+        const uint32_t usageIndex = uint32_t(vertexElement->usageIndex);
+        // Metal's vertex-buffer binding ABI has not been extended yet.
+        out += "\n#ifdef __air__\n";
+        print("swapFloats(g_SwappedPositions, input.iPosition{0}, {0})", usageIndex);
+        out += "\n#else\n";
+        print("loadIndexedPosition(g_IndexedPosition{}, g_IndexedPosition({}u), {}(r{}.{}))",
+              usageIndex, usageIndex - 1u, instr.isIndexRounded ? "round" : "trunc",
+              instr.srcRegister, SWIZZLES[instr.srcSwizzle]);
+        out += "\n#endif\n";
+    }
     else
     {
 
@@ -379,7 +396,7 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             // PGR4: POSITION1..3 carry a per-draw FLOAT16 matrix; same
             // half-order fix-up as tfetchPos3N gives POSITION0.
             if (usageIndex > 0)
-                print("swapInstanceRow(g_SwappedPositions, ");
+                print("swapFloats(g_SwappedPositions, ");
             break;
         default:
             break;
