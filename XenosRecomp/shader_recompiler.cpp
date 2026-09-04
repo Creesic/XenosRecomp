@@ -379,7 +379,7 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             // PGR4: POSITION1..3 carry a per-draw FLOAT16 matrix; same
             // half-order fix-up as tfetchPos3N gives POSITION0.
             if (usageIndex > 0)
-                print("swapFloats(g_SwappedPositions, ");
+                print("swapInstanceRow(g_SwappedPositions, ");
             break;
         default:
             break;

@@ -865,6 +865,14 @@ float4 swapFloats(uint swappedFloats, float4 value, uint semanticIndex)
     return (swappedFloats & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
 }
 
+// PGR4 EXPERIMENT: instance-matrix rows (POSITION1+). Same half-order fix-up,
+// but the 4th half is dropped -- see the crowd analysis in the transfer notes.
+float4 swapInstanceRow(uint swappedFloats, float4 value, uint semanticIndex)
+{
+    float4 swapped = swapFloats(swappedFloats, value, semanticIndex);
+    return float4(swapped.xyz, 0.0);
+}
+
 // PGR4 (2026-09-03): vertex element formats the host input assembler cannot
 // convert (Xenos k_10_11_11 / k_11_11_10 / k_2_10_10_10 in unorm, uint and
 // snorm flavours). The host feeds such elements as a raw uint (R32_UINT) and
