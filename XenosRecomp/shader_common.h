@@ -58,6 +58,7 @@ struct PushConstants
 // not 1/W). Default 8 = standard homogeneous output (no-op tail).
 #define g_VteFlags vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 352)
 #define g_LoopConstant(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 356 + uint(INDEX) * 4)
+#define g_R11G11B10Texcoords vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 484)
 
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
 
@@ -98,6 +99,7 @@ struct PushConstants
 #define g_conditionalRenderingIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 348)))
 #define g_VteFlags (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 352)))
 #define g_LoopConstant(INDEX) (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 356 + uint(INDEX) * 4)))
+#define g_R11G11B10Texcoords (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 484)))
 
 #else
 
@@ -119,6 +121,7 @@ struct PushConstants
 #define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
 #define g_LoopConstant(INDEX) g_VteAndLoopConstants[(uint(INDEX) + 1u) >> 2][(uint(INDEX) + 1u) & 3u]
+#define g_R11G11B10Texcoords g_VteAndLoopConstants[8].y
 
 uint g_SpecConstants();
 
@@ -733,9 +736,9 @@ float4 tfetchCubeCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 #endif
 #endif
 
-float4 tfetchR11G11B10(uint4 value)
+float4 tfetchR11G11B10(uint4 value, bool unpack)
 {
-    if (g_SpecConstants() & SPEC_CONSTANT_R11G11B10_NORMAL)
+    if (unpack)
     {
         return float4(
             (value.x & 0x00000400 ? -1.0 : 0.0) + ((value.x & 0x3FF) / 1024.0),
@@ -751,6 +754,12 @@ float4 tfetchR11G11B10(uint4 value)
         return asfloat(value);
 #endif
     }
+}
+
+float4 tfetchR11G11B10(uint4 value)
+{
+    return tfetchR11G11B10(value,
+        (g_SpecConstants() & SPEC_CONSTANT_R11G11B10_NORMAL) != 0);
 }
 
 float4 unpackUByte4Basis(float4 value)

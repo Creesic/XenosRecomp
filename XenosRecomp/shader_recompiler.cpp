@@ -327,10 +327,10 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
 #else
         const bool byteBasis = false;
 #endif
-        // Xbox 360 DEC3N/k_10_11_11/k_11_11_10 packed normals arrive as a raw
-        // uint that the D3D12 input assembler passes through bit-for-bit into
-        // the float4 input register (format/type mismatch -> no conversion,
-        // same mechanism as tfetchPos3N's uint4 position fetch). Unwrapped,
+        // Xbox 360 DEC3N/k_10_11_11/k_11_11_10 packed normals arrive in a
+        // float4 input whose R32_FLOAT layout preserves the raw word for
+        // asuint below. POSITION0 instead uses a matching uint4 input/layout.
+        // Unwrapped,
         // this is exactly asfloat(rawBits) -- a huge garbage vector, which
         // flattens per-pixel lighting into a near-uniform result. tfetchR11G11B10
         // unpacks it correctly when SPEC_CONSTANT_R11G11B10_NORMAL is set; when
@@ -338,6 +338,9 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         // asfloat(asuint(x)) == x, a guaranteed no-op round-trip, so wrapping
         // unconditionally (same pattern as byteBasis) cannot break those cases.
         const bool packedNormalBasis = byteBasis;
+        // FM2 strips vfetch format fields from its embedded shader containers.
+        // The bound declaration restores the per-TEXCOORD packed-format mask.
+        const bool packedTexcoord = vertexElement->usage == DeclUsage::TexCoord;
 
         if (position0)
         {
@@ -376,11 +379,17 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             out += "tfetchR11G11B10(asuint(";
             specConstantsMask |= SPEC_CONSTANT_R11G11B10_NORMAL;
         }
+        else if (packedTexcoord)
+        {
+            out += "tfetchR11G11B10(asuint(";
+        }
 
         print("(input.i{}{})", USAGE_VARIABLES[uint32_t(vertexElement->usage)], usageIndex);
 
         if (packedNormalBasis)
             out += "))";
+        else if (packedTexcoord)
+            print("), (g_R11G11B10Texcoords & (1u << {})) != 0)", usageIndex);
 
         switch (vertexElement->usage)
         {
