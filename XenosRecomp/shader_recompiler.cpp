@@ -1030,7 +1030,16 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             default:
             {
                 auto findResult = interpolators.find(instr.vectorDest);
-                assert(findResult != interpolators.end());
+                if (findResult == interpolators.end())
+                {
+                    // Export registers with no host equivalent: 63 carries
+                    // point size / edge flag / kill vertex (one PGR4 shader
+                    // writes it), 32..37 would be memory export. Sink the
+                    // write instead of indexing an end() iterator.
+                    unhandledExports |= 1ull << (instr.vectorDest & 63u);
+                    exportRegister = "exportSink";
+                    break;
+                }
                 exportRegister = findResult->second;
                 break;
             }
@@ -2501,6 +2510,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
         out += "\n";
     }
+
+    // Sink for Xenos export registers with no host equivalent (63 = point
+    // size / edge flag / kill vertex). Declared unconditionally.
+    out += "\tfloat4 exportSink = 0.0;\n";
 
     for (size_t i = 0; i < std::size(printedRegisters); i++)
     {

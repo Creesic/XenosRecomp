@@ -25,6 +25,9 @@ struct ShaderRecompiler : StringBuffer
 {
     uint32_t indentation = 0;
     bool isPixelShader = false;
+    // PGR4: bitmask of Xenos export registers with no host equivalent that the
+    // shader wrote (63 = point size / edge flag / kill vertex).
+    uint64_t unhandledExports = 0;
 
     // PGR4: vertex shaders address their textures through a separate 4-slot
     // table appended to SharedConstants (2D @512, 3D @528, cube @544,
