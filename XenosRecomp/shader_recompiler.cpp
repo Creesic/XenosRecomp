@@ -2349,6 +2349,19 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             out += "\tin uint iInstanceId : SV_InstanceID\n";
             out += "#endif\n";
         }
+    #else
+        // PGR4: Xenos starts every vertex shader with r0.x = vertex index. The
+        // crowd shaders divide it by their per-instance vertex count to pick a
+        // constant-palette matrix, so the id has to reach r0.
+        if (!isPixelShader)
+        {
+            out += "\t,\n";
+            out += "#ifdef __air__\n";
+            out += "\tuint iVertexId [[vertex_id]]\n";
+            out += "#else\n";
+            out += "\tin uint iVertexId : SV_VertexID\n";
+            out += "#endif\n";
+        }
     #endif
     }
 
@@ -2499,6 +2512,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             else if (!isPixelShader && hasIndexCount && i == 0)
             {
                 out += "float4(iVertexId + g_IndexCount.x * iInstanceId, 0.0, 0.0, 0.0);\n";
+            }
+        #else
+            else if (!isPixelShader && i == 0)
+            {
+                out += "float4(iVertexId, 0.0, 0.0, 0.0);\n";
             }
         #endif
             else
