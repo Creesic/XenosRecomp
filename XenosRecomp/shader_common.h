@@ -897,12 +897,18 @@ float4 unpackVertexMode(uint mode, float4 value)
         return float4(as_type<int4>(value));
     if (mode == 11u)
         return float4(as_type<uint4>(value));
+    // 12: UBYTE4 integers delivered through a UNORM format (bone indices).
+    if (mode == 12u)
+        return round(value * 255.0);
     uint b = as_type<uint>(value.x);
 #else
     if (mode == 10u)
         return float4(asint(value));
     if (mode == 11u)
         return float4(asuint(value));
+    // 12: UBYTE4 integers delivered through a UNORM format (bone indices).
+    if (mode == 12u)
+        return round(value * 255.0);
     uint b = asuint(value.x);
 #endif
     uint family = (mode - 1u) / 3u;
