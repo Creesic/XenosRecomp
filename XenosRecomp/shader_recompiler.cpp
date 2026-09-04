@@ -1785,7 +1785,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     out += "#ifdef __spirv__\n\n";
     out += "#define LoadVertexShaderConstant(INDEX) vk::RawBufferLoad<float4>(g_PushConstants.VertexShaderConstants + min(uint(INDEX), 255u) * 16, 0x10)\n";
-    out += "#define LoadPixelShaderConstant(INDEX) vk::RawBufferLoad<float4>(g_PushConstants.PixelShaderConstants + min(uint(INDEX), 223u) * 16, 0x10)\n\n";
+    out += "#define LoadPixelShaderConstant(INDEX) vk::RawBufferLoad<float4>(g_PushConstants.PixelShaderConstants + min(uint(INDEX), 255u) * 16, 0x10)\n\n";
 
 #ifdef UNLEASHED_RECOMP
     bool isMetaInstancer = false;
@@ -1824,7 +1824,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             if (constantInfo->registerCount > 1)
             {
-                uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
+                uint32_t tailCount = 256 - constantInfo->registerIndex;
 
                 println("#define {}(INDEX) selectWrapper((INDEX) < {}, vk::RawBufferLoad<float4>(g_PushConstants.{}ShaderConstants + ({} + min(INDEX, {})) * 16, 0x10), 0.0)",
                     constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
@@ -1872,7 +1872,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     out += "\n#elif defined(__air__)\n\n";
     out += "#define LoadVertexShaderConstant(INDEX) (*(reinterpret_cast<device float4*>(g_PushConstants.VertexShaderConstants + min(uint(INDEX), 255u) * 16)))\n";
-    out += "#define LoadPixelShaderConstant(INDEX) (*(reinterpret_cast<device float4*>(g_PushConstants.PixelShaderConstants + min(uint(INDEX), 223u) * 16)))\n\n";
+    out += "#define LoadPixelShaderConstant(INDEX) (*(reinterpret_cast<device float4*>(g_PushConstants.PixelShaderConstants + min(uint(INDEX), 255u) * 16)))\n\n";
 
     for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
     {
@@ -1906,7 +1906,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             if (constantInfo->registerCount > 1)
             {
-                uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
+                uint32_t tailCount = 256 - constantInfo->registerIndex;
 
                 println("#define {}(INDEX) selectWrapper((INDEX) < {}, (*(reinterpret_cast<device float4*>(g_PushConstants.{}ShaderConstants + ({} + min(INDEX, {})) * 16))), 0.0)",
                     constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
@@ -1953,7 +1953,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += "\n#else\n\n";
 
     const char* shaderName = isPixelShader ? "Pixel" : "Vertex";
-    const uint32_t shaderConstantCount = isPixelShader ? 224 : 256;
+    // PGR4 pixel shaders address c0..c255 (the guest device reserves a full
+    // 4096-byte float constant file per stage, and the car material samples
+    // c255), so both stages expose 256 registers.
+    const uint32_t shaderConstantCount = 256;
 
     println("cbuffer {}ShaderConstants : register(b{}, space4)", shaderName, isPixelShader ? 1 : 0);
     out += "{\n";
@@ -1974,7 +1977,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             if (constantInfo->registerCount > 1)
             {
-                uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
+                uint32_t tailCount = 256 - constantInfo->registerIndex;
                 println("#define {0}(INDEX) selectWrapper((INDEX) < {1}, g_{2}ShaderConstants[{3} + min(uint(INDEX), {4}u)], 0.0)",
                     constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
             }
