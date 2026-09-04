@@ -25,6 +25,21 @@ struct ShaderRecompiler : StringBuffer
 {
     uint32_t indentation = 0;
     bool isPixelShader = false;
+
+    // PGR4: vertex shaders address their textures through a separate 4-slot
+    // table appended to SharedConstants (2D @512, 3D @528, cube @544,
+    // samplers @560). D3DVERTEXTEXTURESAMPLER0..3 are samplers 16..19 and
+    // the microcode fetches them as constants 16..19 (aliased onto s0..s3
+    // below), so a vertex-shader sampler n < 4 means vertex slot n.
+    uint32_t textureIndexOffset(size_t dim, uint32_t reg) const
+    {
+        return (!isPixelShader && reg < 4) ? 512 + uint32_t(dim) * 16 + reg * 4
+                                           : uint32_t(dim) * 64 + reg * 4;
+    }
+    uint32_t samplerIndexOffset(uint32_t reg) const
+    {
+        return (!isPixelShader && reg < 4) ? 560 + reg * 4 : 192 + reg * 4;
+    }
     const uint8_t* constantTableData = nullptr;
     std::unordered_map<uint32_t, VertexElement> vertexElements;
     std::unordered_map<uint32_t, std::string> interpolators;

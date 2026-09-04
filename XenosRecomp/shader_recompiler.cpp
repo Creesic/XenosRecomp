@@ -633,7 +633,32 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
 
     indent();
     print("\t{0}_Texture{1}DescriptorIndex, {0}_SamplerDescriptorIndex, ", constNamePtr, dimension);
-    printSrcRegister(componentCount);
+    // PGR4: tfetch with unnormalized (texel) coordinates -- the skinned car
+    // fetches its bone palette at u = 3 * boneIndex. Divide by the texture
+    // dimensions before sampling.
+    const bool denorm = instr.opcode == FetchOpcode::TextureFetch && instr.texCoordDenorm &&
+        (instr.dimension == TextureDimension::Texture2D || instr.dimension == TextureDimension::Texture3D);
+    if (denorm)
+    {
+        out += "\n";
+        println("#ifdef __air__");
+        indent();
+        print("\tdenormCoord{0}(g_Texture{0}DescriptorHeap, {1}_Texture{0}DescriptorIndex, ", dimension, constNamePtr);
+        printSrcRegister(componentCount);
+        out += ")\n";
+        println("#else");
+        indent();
+        print("\tdenormCoord{0}({1}_Texture{0}DescriptorIndex, ", dimension, constNamePtr);
+        printSrcRegister(componentCount);
+        out += ")\n";
+        println("#endif");
+        indent();
+        out += "\t";
+    }
+    else
+    {
+        printSrcRegister(componentCount);
+    }
 
     switch (instr.dimension)
     {
@@ -1820,11 +1845,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
                 println("#define {}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
-                    constantName, TEXTURE_DIMENSIONS[j], j * 64 + constantInfo->registerIndex * 4);
+                    constantName, TEXTURE_DIMENSIONS[j], textureIndexOffset(j, constantInfo->registerIndex));
             }
 
             println("#define {}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
-                constantName, std::size(TEXTURE_DIMENSIONS) * 64 + constantInfo->registerIndex * 4);
+                constantName, samplerIndexOffset(constantInfo->registerIndex));
 
             samplers.emplace(constantInfo->registerIndex, constantName);
             break;
@@ -1838,11 +1863,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
         {
             println("#define s{}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
-                samplerIndex, TEXTURE_DIMENSIONS[j], j * 64 + samplerIndex * 4);
+                samplerIndex, TEXTURE_DIMENSIONS[j], textureIndexOffset(j, samplerIndex));
         }
 
         println("#define s{}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
-            samplerIndex, std::size(TEXTURE_DIMENSIONS) * 64 + samplerIndex * 4);
+            samplerIndex, samplerIndexOffset(samplerIndex));
     }
 
     out += "\n#elif defined(__air__)\n\n";
@@ -1900,11 +1925,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
                 println("#define {}_Texture{}DescriptorIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + {})))",
-                    constantName, TEXTURE_DIMENSIONS[j], j * 64 + constantInfo->registerIndex * 4);
+                    constantName, TEXTURE_DIMENSIONS[j], textureIndexOffset(j, constantInfo->registerIndex));
             }
 
             println("#define {}_SamplerDescriptorIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + {})))",
-                constantName, std::size(TEXTURE_DIMENSIONS) * 64 + constantInfo->registerIndex * 4);
+                constantName, samplerIndexOffset(constantInfo->registerIndex));
 
             samplers.emplace(constantInfo->registerIndex, constantName);
             break;
@@ -1918,11 +1943,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
         {
             println("#define s{}_Texture{}DescriptorIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + {})))",
-                samplerIndex, TEXTURE_DIMENSIONS[j], j * 64 + samplerIndex * 4);
+                samplerIndex, TEXTURE_DIMENSIONS[j], textureIndexOffset(j, samplerIndex));
         }
 
         println("#define s{}_SamplerDescriptorIndex (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + {})))",
-            samplerIndex, std::size(TEXTURE_DIMENSIONS) * 64 + samplerIndex * 4);
+            samplerIndex, samplerIndexOffset(samplerIndex));
     }
 
     out += "\n#else\n\n";
@@ -1982,11 +2007,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
                 println("\tuint {}_Texture{}DescriptorIndex : packoffset(c{}.{});",
-                    constantName, TEXTURE_DIMENSIONS[j], j * 4 + constantInfo->registerIndex / 4, SWIZZLES[constantInfo->registerIndex % 4]);
+                    constantName, TEXTURE_DIMENSIONS[j], textureIndexOffset(j, constantInfo->registerIndex) / 16, SWIZZLES[(textureIndexOffset(j, constantInfo->registerIndex) % 16) / 4]);
             }
 
             println("\tuint {}_SamplerDescriptorIndex : packoffset(c{}.{});",
-                constantName, 4 * std::size(TEXTURE_DIMENSIONS) + constantInfo->registerIndex / 4, SWIZZLES[constantInfo->registerIndex % 4]);
+                constantName, samplerIndexOffset(constantInfo->registerIndex) / 16, SWIZZLES[(samplerIndexOffset(constantInfo->registerIndex) % 16) / 4]);
         }
     }
 
@@ -2000,11 +2025,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
         {
             println("\tuint s{}_Texture{}DescriptorIndex : packoffset(c{}.{});",
-                samplerIndex, TEXTURE_DIMENSIONS[j], j * 4 + samplerIndex / 4, SWIZZLES[samplerIndex % 4]);
+                samplerIndex, TEXTURE_DIMENSIONS[j], textureIndexOffset(j, samplerIndex) / 16, SWIZZLES[(textureIndexOffset(j, samplerIndex) % 16) / 4]);
         }
 
         println("\tuint s{}_SamplerDescriptorIndex : packoffset(c{}.{});",
-            samplerIndex, 4 * std::size(TEXTURE_DIMENSIONS) + samplerIndex / 4, SWIZZLES[samplerIndex % 4]);
+            samplerIndex, samplerIndexOffset(samplerIndex) / 16, SWIZZLES[(samplerIndexOffset(samplerIndex) % 16) / 4]);
     }
 
     out += "\tDEFINE_SHARED_CONSTANTS();\n";

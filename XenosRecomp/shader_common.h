@@ -264,6 +264,17 @@ uint3 getTexture2DArrayDimensions(texture2d_array<float> texture)
     return uint3(texture.get_width(), texture.get_height(), texture.get_array_size());
 }
 
+// PGR4: unnormalized (texel) fetch coordinates (tfetch tx_coord_denorm).
+float2 denormCoord2D(constant Texture2DDescriptorHeap* textureHeap, uint resourceDescriptorIndex, float2 texCoord)
+{
+    return texCoord / float2(getTexture2DDimensions(textureHeap[resourceDescriptorIndex].tex));
+}
+
+float3 denormCoord2DArray(constant Texture2DArrayDescriptorHeap* textureHeap, uint resourceDescriptorIndex, float3 texCoord)
+{
+    return texCoord / float3(getTexture2DArrayDimensions(textureHeap[resourceDescriptorIndex].tex));
+}
+
 float4 tfetch2D(constant Texture2DDescriptorHeap* textureHeap,
                 constant SamplerDescriptorHeap* samplerHeap,
                 uint resourceDescriptorIndex,
@@ -403,6 +414,17 @@ uint3 getTexture2DArrayDimensions(Texture2DArray<float4> texture)
     uint4 dimensions;
     texture.GetDimensions(0, dimensions.x, dimensions.y, dimensions.z, dimensions.w);
     return dimensions.xyz;
+}
+
+// PGR4: unnormalized (texel) fetch coordinates (tfetch tx_coord_denorm).
+float2 denormCoord2D(uint resourceDescriptorIndex, float2 texCoord)
+{
+    return texCoord / float2(getTexture2DDimensions(g_Texture2DDescriptorHeap[resourceDescriptorIndex]));
+}
+
+float3 denormCoord2DArray(uint resourceDescriptorIndex, float3 texCoord)
+{
+    return texCoord / float3(getTexture2DArrayDimensions(g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex]));
 }
 
 float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
