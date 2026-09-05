@@ -59,6 +59,7 @@ struct PushConstants
 #define g_VteFlags vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 352)
 #define g_LoopConstant(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 356 + uint(INDEX) * 4)
 #define g_R11G11B10Texcoords vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 484)
+#define g_TextureExponentAdjust(INDEX) vk::RawBufferLoad<int>(g_PushConstants.SharedConstants + 496 + uint(INDEX) * 4)
 
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
 
@@ -100,6 +101,7 @@ struct PushConstants
 #define g_VteFlags (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 352)))
 #define g_LoopConstant(INDEX) (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 356 + uint(INDEX) * 4)))
 #define g_R11G11B10Texcoords (*(reinterpret_cast<device uint*>(g_PushConstants.SharedConstants + 484)))
+#define g_TextureExponentAdjust(INDEX) (*(reinterpret_cast<device int*>(g_PushConstants.SharedConstants + 496 + uint(INDEX) * 4)))
 
 #else
 
@@ -116,12 +118,14 @@ struct PushConstants
     float g_AlphaThreshold : packoffset(c21.y); \
     uint g_conditionalSurveyIndex : packoffset(c21.z); \
     uint g_conditionalRenderingIndex : packoffset(c21.w); \
-    uint4 g_VteAndLoopConstants[9] : packoffset(c22);
+    uint4 g_VteAndLoopConstants[9] : packoffset(c22); \
+    int4 g_TextureExponentAdjusts[4] : packoffset(c31);
 
 #define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
 #define g_LoopConstant(INDEX) g_VteAndLoopConstants[(uint(INDEX) + 1u) >> 2][(uint(INDEX) + 1u) & 3u]
 #define g_R11G11B10Texcoords g_VteAndLoopConstants[8].y
+#define g_TextureExponentAdjust(INDEX) g_TextureExponentAdjusts[uint(INDEX) / 4u][uint(INDEX) & 3u]
 
 uint g_SpecConstants();
 
@@ -735,6 +739,46 @@ float4 tfetchCubeCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 }
 #endif
 #endif
+
+// Prepatched vertex fetches use raw IA words. Keep this independent of the
+// declaration-driven FM2 compatibility masks used by unpatched shaders.
+float4 tfetchBakedFloat3(uint4 value)
+{
+#ifdef __air__
+    return float4(as_type<float4>(value).xyz, 1.0);
+#else
+    return float4(asfloat(value).xyz, 1.0);
+#endif
+}
+
+float4 tfetchBakedPacked(uint value, uint format, bool isSigned, bool normalized,
+                         bool noZero, int exponent)
+{
+    float4 result = float4(0.0, 0.0, 0.0, 1.0);
+    uint count = format == 7u ? 4u : 2u;
+    for (uint i = 0u; i < count; ++i)
+    {
+        uint width = format == 7u ? (i == 3u ? 2u : 10u) : 16u;
+        uint shift = format == 7u ? i * 10u : i * 16u;
+        uint mask = (1u << width) - 1u;
+        float component;
+        if (isSigned)
+        {
+            component = float(int(value << (32u - width - shift)) >> (32u - width));
+            if (normalized)
+                component = noZero ? (component + 0.5) * (2.0 / float(mask))
+                                   : max(-1.0, component / float(mask >> 1u));
+        }
+        else
+        {
+            component = float((value >> shift) & mask);
+            if (normalized)
+                component /= float(mask);
+        }
+        result[i] = component * exp2(float(exponent));
+    }
+    return result;
+}
 
 float4 tfetchR11G11B10(uint4 value, bool unpack)
 {

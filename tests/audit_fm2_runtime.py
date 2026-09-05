@@ -7,13 +7,14 @@ import argparse
 import json
 import os
 import re
+import struct
 import subprocess
 from collections import Counter
 from pathlib import Path
 
 AUDITED_OPCODES = {
     "cf": {0, 1, 2, 5, 7, 8, 11, 12, 13},
-    "vector": {0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 25},
+    "vector": {0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 25},
     "scalar": {0, 1, 2, 3, 5, 6, 8, 9, 10, 11, 12, 13, 14, 16, 19, 22, 23, 25,
                27, 28, 29, 30, 40, 42, 43, 44, 45, 46, 47, 50},
     "fetch": {0, 1, 18, 24},
@@ -39,6 +40,7 @@ def main() -> int:
     fallback_shader_count = 0
     unnamed_sampler_shader_count = 0
     reflected_alias_shader_count = 0
+    baked_vertex_shader_count = 0
 
     env = os.environ.copy()
     env["XENOS_RECOMP_TRACE"] = "1"
@@ -78,6 +80,28 @@ def main() -> int:
             failures.append(f"{shader.name}: generated body marker is missing")
             continue
         body = hlsl[body_offset:]
+
+        raw = shader.read_bytes()
+        if struct.unpack_from('>I', raw)[0] & 0x41 == 0x41:
+            baked_vertex_shader_count += 1
+            word = lambda offset: struct.unpack_from('>I', raw, offset)[0]
+            record = word(24)
+            count = word(record + 28)
+            # Each prepatched input is fetched once in this corpus. Its own
+            # swizzle/format replaces, rather than stacks with, decl fixups.
+            if body.count('tfetchBaked') != count:
+                failures.append(f'{shader.name}: baked input count mismatch')
+            if 'swapFloats(' in body or 'tfetchR11G11B10(' in body:
+                failures.append(f'{shader.name}: baked fetch uses dynamic declaration decoding')
+
+        # Xenia kCndGe (13): ordered src0 >= 0 selects src1, otherwise src2.
+        # The track UV-atlas shaders exercise this five times in run517.
+        cndge = sum(vector == 13 for vector, _ in alu)
+        emitted_cndge = len(re.findall(r"selectWrapper\([^;\n]*? >= 0\.0,", body))
+        if cndge != emitted_cndge:
+            failures.append(
+                f"{shader.name}: cndge mismatch expected={cndge} emitted={emitted_cndge}"
+            )
 
         if re.search(r"(?m)^\s*else\s*$", body):
             structured_else_shader_count += 1
@@ -188,6 +212,7 @@ def main() -> int:
         "fallback_shader_count": fallback_shader_count,
         "unnamed_sampler_shader_count": unnamed_sampler_shader_count,
         "reflected_alias_shader_count": reflected_alias_shader_count,
+        "baked_vertex_shader_count": baked_vertex_shader_count,
         "opcode_counts": {
             kind: dict(sorted(counter.items())) for kind, counter in counts.items()
         },

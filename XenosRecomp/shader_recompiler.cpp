@@ -313,6 +313,41 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
                     uint32_t(vertexElement->usageIndex));
         out += "float4(0.0, 0.0, 0.0, 0.0)";
     }
+    else if (bakedVertexFetch)
+    {
+        // Flag 0x40: XDK loads the original fetches without declaration
+        // patching. The runtime supplies raw IA words; the instruction owns
+        // signedness, normalization and swizzle (no declaration-time swaps).
+        const bool position0 = isPosition0(vertexElement->usage, uint32_t(vertexElement->usageIndex));
+        if (instr.format == 57)
+        {
+            if (position0)
+                out += "tfetchBakedFloat3(";
+            print("input.i{}{}", USAGE_VARIABLES[uint32_t(vertexElement->usage)],
+                  uint32_t(vertexElement->usageIndex));
+            if (position0)
+                out += ")";
+            if (instr.expAdjust != 0)
+                print(" * exp2({}.0)", instr.expAdjust);
+        }
+        else if (instr.format == 7 || instr.format == 25)
+        {
+            out += "tfetchBakedPacked(";
+            if (!position0)
+                out += "asuint(";
+            print("input.i{}{}", USAGE_VARIABLES[uint32_t(vertexElement->usage)],
+                  uint32_t(vertexElement->usageIndex));
+            if (!position0)
+                out += ")";
+            print(".x, {}u, {}, {}, {}, {})", instr.format,
+                  instr.formatCompAll ? "true" : "false", instr.numFormatAll ? "false" : "true",
+                  instr.signedRfModeAll ? "true" : "false", instr.expAdjust);
+        }
+        else
+        {
+            throw std::runtime_error(fmt::format("unsupported baked vertex fetch format {}", instr.format));
+        }
+    }
     else
     {
 
@@ -633,6 +668,10 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     out += ".";
 
     printDstSwizzle(instr.dstSwizzle, true);
+
+    // Scale sampled lanes before inserting literal 0/1 destination lanes.
+    if (instr.opcode == FetchOpcode::TextureFetch)
+        print(" * exp2(float(g_TextureExponentAdjust({})))", instr.constIndex);
 
     out += ";\n";
 
@@ -1623,6 +1662,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     assert((shaderContainer->flags & 0xFFFFFF00) == 0x102A1100);
 
     isPixelShader = (shaderContainer->flags & 0x1) == 0;
+    bakedVertexFetch = !isPixelShader && (shaderContainer->flags & 0x40) != 0;
     // bug-140: gate the PS-only computed-LOD tfetch variants (Sample/SampleBias
     // are illegal in vertex shaders); must precede the shader_common.h include.
     if (isPixelShader)
@@ -1906,29 +1946,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         shaderName, shaderName, shaderConstantCount - 1);
     out += "\n";
 
-    for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
-    {
-        const auto constantInfo = reinterpret_cast<const ConstantInfo*>(
-            constantTableData + constantTableContainer->constantTable.constantInfo + i * sizeof(ConstantInfo));
-
-        if (constantInfo->registerSet == RegisterSet::Float4)
-        {
-            const char* constantName = reinterpret_cast<const char*>(constantTableData + constantInfo->name);
-
-            if (constantInfo->registerCount > 1)
-            {
-                uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
-                println("#define {0}(INDEX) selectWrapper((INDEX) < {1}, g_{2}ShaderConstants[{3} + min(uint(INDEX), {4}u)], 0.0)",
-                    constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
-            }
-            else
-            {
-                println("#define {} g_{}ShaderConstants[{}]", constantName, shaderName,
-                    constantInfo->registerIndex.get());
-            }
-        }
-    }
-
     out += "cbuffer SharedConstants : register(b2, space4)\n";
     out += "{\n";
 
@@ -1977,6 +1994,31 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     out += "\tDEFINE_SHARED_CONSTANTS();\n";
     out += "};\n\n";
+
+    // Reflected names may be register tokens (for example c4). Define aliases
+    // only after the cbuffers so they cannot expand inside packoffset(c4.x).
+    for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
+    {
+        const auto constantInfo = reinterpret_cast<const ConstantInfo*>(
+            constantTableData + constantTableContainer->constantTable.constantInfo + i * sizeof(ConstantInfo));
+
+        if (constantInfo->registerSet == RegisterSet::Float4)
+        {
+            const char* constantName = reinterpret_cast<const char*>(constantTableData + constantInfo->name);
+
+            if (constantInfo->registerCount > 1)
+            {
+                uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
+                println("#define {0}(INDEX) selectWrapper((INDEX) < {1}, g_{2}ShaderConstants[{3} + min(uint(INDEX), {4}u)], 0.0)",
+                    constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
+            }
+            else
+            {
+                println("#define {} g_{}ShaderConstants[{}]", constantName, shaderName,
+                    constantInfo->registerIndex.get());
+            }
+        }
+    }
 
     out += "#endif\n";
 

@@ -30,6 +30,7 @@ endif()
 foreach(required_fragment
         "float textureLod = 0.0;"
         "textureLod = r1.x;"
+        " * exp2(float(g_TextureExponentAdjust("
         "tfetch2DL(")
     string(FIND "${shader_body}" "${required_fragment}" fragment_offset)
     if(fragment_offset EQUAL -1)

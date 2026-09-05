@@ -71,6 +71,13 @@ add_test(
 )
 
 find_program(PYTHON_EXECUTABLE NAMES python python3)
+if(PYTHON_EXECUTABLE)
+    add_test(NAME baked_vertex_fetch
+        COMMAND "${PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verify_baked_fetch.py"
+            --exe "$<TARGET_FILE:XenosRecomp>"
+            --common "${PROJECT_SOURCE_DIR}/XenosRecomp/shader_common.h"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/baked_fetch")
+endif()
 set(FM2_ORACLE_DIR "${PROJECT_SOURCE_DIR}/Sampleshaders/Xenos_shaders/FM2")
 if(PYTHON_EXECUTABLE AND EXISTS "${FM2_ORACLE_DIR}")
     add_test(

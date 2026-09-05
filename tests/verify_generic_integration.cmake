@@ -30,6 +30,19 @@ foreach(header
     endif()
 endforeach()
 
+# Register-shaped reflection aliases (c4, c16, ...) must not rewrite the
+# shared cbuffer's packoffset tokens when the HLSL preprocessor runs.
+string(FIND "${hlsl}" "cbuffer SharedConstants : register(b2, space4)" shared_offset)
+string(FIND "${hlsl}" "\tDEFINE_SHARED_CONSTANTS();" shared_end)
+string(REGEX MATCH "#define [A-Za-z_][A-Za-z0-9_]* g_PixelShaderConstants\\[[^\n]+" alias "${hlsl}")
+if(shared_offset EQUAL -1 OR shared_end LESS shared_offset OR alias STREQUAL "")
+    message(FATAL_ERROR "Missing DXIL cbuffers or reflected Float4 alias")
+endif()
+string(FIND "${hlsl}" "${alias}" alias_offset)
+if(alias_offset LESS shared_end)
+    message(FATAL_ERROR "Float4 alias precedes the end of the DXIL cbuffers")
+endif()
+
 file(WRITE "${WORK}/cache.cpp" "previous-cache\n")
 execute_process(
     COMMAND "${XENOS_RECOMP}" "${WORK}/empty" "${WORK}/cache.cpp" "${SHADER_COMMON}" --jobs 1
@@ -52,7 +65,9 @@ foreach(fragment
         "g_BooleanWord(uint(ADDRESS) >> 5u)"
         "uint(ADDRESS) & 31u"
         "SharedConstants + 256 + uint(INDEX) * 4"
-        "SharedConstants + 356 + uint(INDEX) * 4")
+        "SharedConstants + 356 + uint(INDEX) * 4"
+        "SharedConstants + 496 + uint(INDEX) * 4"
+        "int4 g_TextureExponentAdjusts[4] : packoffset(c31)")
     string(FIND "${common}" "${fragment}" fragment_offset)
     if(fragment_offset EQUAL -1)
         message(FATAL_ERROR "Missing unified boolean/loop ABI fragment: ${fragment}")
