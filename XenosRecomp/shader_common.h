@@ -274,6 +274,13 @@ float2 denormCoord2D(constant Texture2DDescriptorHeap* textureHeap, uint resourc
     return texCoord / float2(getTexture2DDimensions(textureHeap[resourceDescriptorIndex].tex));
 }
 
+// 1D fetches sample the 2D heap at v = 0.5 (tfetch1D); the rider's bone
+// palette is a 1D denorm fetch at u = 3 * boneIndex.
+float denormCoord1D(constant Texture2DDescriptorHeap* textureHeap, uint resourceDescriptorIndex, float texCoord)
+{
+    return texCoord / float(getTexture2DDimensions(textureHeap[resourceDescriptorIndex].tex).x);
+}
+
 float3 denormCoord2DArray(constant Texture2DArrayDescriptorHeap* textureHeap, uint resourceDescriptorIndex, float3 texCoord)
 {
     return texCoord / float3(getTexture2DArrayDimensions(textureHeap[resourceDescriptorIndex].tex));
@@ -294,10 +301,10 @@ float4 tfetch1D(constant Texture2DDescriptorHeap* textureHeap,
                 constant SamplerDescriptorHeap* samplerHeap,
                 uint resourceDescriptorIndex,
                 uint samplerDescriptorIndex,
-                float texCoord)
+                float texCoord, float offset)
 {
     return tfetch2D(textureHeap, samplerHeap, resourceDescriptorIndex, samplerDescriptorIndex,
-        float2(texCoord, 0.5), float2(0.0));
+        float2(texCoord, 0.5), float2(offset, 0.0));
 }
 
 float4 tfetch2DArray(constant Texture2DArrayDescriptorHeap* textureHeap,
@@ -337,10 +344,10 @@ float4 tfetch2DL(constant Texture2DDescriptorHeap* textureHeap,
 float4 tfetch1DL(constant Texture2DDescriptorHeap* textureHeap,
                  constant SamplerDescriptorHeap* samplerHeap,
                  uint resourceDescriptorIndex, uint samplerDescriptorIndex,
-                 float texCoord, float lod)
+                 float texCoord, float offset, float lod)
 {
     return tfetch2DL(textureHeap, samplerHeap, resourceDescriptorIndex,
-                     samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0), lod);
+                     samplerDescriptorIndex, float2(texCoord, 0.5), float2(offset, 0.0), lod);
 }
 
 float4 tfetch2DArrayL(constant Texture2DArrayDescriptorHeap* textureHeap,
@@ -426,6 +433,13 @@ float2 denormCoord2D(uint resourceDescriptorIndex, float2 texCoord)
     return texCoord / float2(getTexture2DDimensions(g_Texture2DDescriptorHeap[resourceDescriptorIndex]));
 }
 
+// 1D fetches sample the 2D heap at v = 0.5 (tfetch1D); the rider's bone
+// palette is a 1D denorm fetch at u = 3 * boneIndex.
+float denormCoord1D(uint resourceDescriptorIndex, float texCoord)
+{
+    return texCoord / float(getTexture2DDimensions(g_Texture2DDescriptorHeap[resourceDescriptorIndex]).x);
+}
+
 float3 denormCoord2DArray(uint resourceDescriptorIndex, float3 texCoord)
 {
     return texCoord / float3(getTexture2DArrayDimensions(g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex]));
@@ -437,9 +451,9 @@ float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float
     return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), 0.0);
 }
 
-float4 tfetch1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord)
+float4 tfetch1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord, float offset)
 {
-    return tfetch2D(resourceDescriptorIndex, samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0, 0.0));
+    return tfetch2D(resourceDescriptorIndex, samplerDescriptorIndex, float2(texCoord, 0.5), float2(offset, 0.0));
 }
 
 float4 tfetch2DArray(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
@@ -465,10 +479,10 @@ float4 tfetch2DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 }
 
 float4 tfetch1DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
-                 float texCoord, float lod)
+                 float texCoord, float offset, float lod)
 {
     return tfetch2DL(resourceDescriptorIndex, samplerDescriptorIndex,
-                     float2(texCoord, 0.5), float2(0.0, 0.0), lod);
+                     float2(texCoord, 0.5), float2(offset, 0.0), lod);
 }
 
 float4 tfetch2DArrayL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
@@ -720,10 +734,10 @@ float4 tfetch2DCL(constant Texture2DDescriptorHeap* textureHeap,
 float4 tfetch1DCL(constant Texture2DDescriptorHeap* textureHeap,
                   constant SamplerDescriptorHeap* samplerHeap,
                   uint resourceDescriptorIndex, uint samplerDescriptorIndex,
-                  float texCoord, float lodBias)
+                  float texCoord, float offset, float lodBias)
 {
     return tfetch2DCL(textureHeap, samplerHeap, resourceDescriptorIndex,
-                      samplerDescriptorIndex, float2(texCoord, 0.5), float2(0.0), lodBias);
+                      samplerDescriptorIndex, float2(texCoord, 0.5), float2(offset, 0.0), lodBias);
 }
 
 float4 tfetch2DArrayCL(constant Texture2DArrayDescriptorHeap* textureHeap,
@@ -757,10 +771,10 @@ float4 tfetch2DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 }
 
 float4 tfetch1DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
-                  float texCoord, float lodBias)
+                  float texCoord, float offset, float lodBias)
 {
     return tfetch2DCL(resourceDescriptorIndex, samplerDescriptorIndex,
-                      float2(texCoord, 0.5), float2(0.0, 0.0), lodBias);
+                      float2(texCoord, 0.5), float2(offset, 0.0), lodBias);
 }
 
 float4 tfetch2DArrayCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,

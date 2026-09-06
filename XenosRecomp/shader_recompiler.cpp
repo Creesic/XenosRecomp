@@ -652,15 +652,19 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     print("\t{0}_Texture{1}DescriptorIndex, {0}_SamplerDescriptorIndex, ", constNamePtr, dimension);
     // PGR4: tfetch with unnormalized (texel) coordinates -- the skinned car
     // fetches its bone palette at u = 3 * boneIndex. Divide by the texture
-    // dimensions before sampling.
+    // dimensions before sampling. The rider does the same through a 1D fetch
+    // (pgr4_race8.rdc EID 16923: u = 81 reached SampleLevel undivided and
+    // clamped to the last texel); 1D fetches live in the 2D heap.
     const bool denorm = instr.opcode == FetchOpcode::TextureFetch && instr.texCoordDenorm &&
-        (instr.dimension == TextureDimension::Texture2D || instr.dimension == TextureDimension::Texture3D);
+        (instr.dimension == TextureDimension::Texture1D || instr.dimension == TextureDimension::Texture2D ||
+         instr.dimension == TextureDimension::Texture3D);
     if (denorm)
     {
+        const std::string_view heapDimension = instr.dimension == TextureDimension::Texture1D ? "2D" : dimension;
         out += "\n";
         println("#ifdef __air__");
         indent();
-        print("\tdenormCoord{0}(g_Texture{0}DescriptorHeap, {1}_Texture{0}DescriptorIndex, ", dimension, constNamePtr);
+        print("\tdenormCoord{0}(g_Texture{2}DescriptorHeap, {1}_Texture{0}DescriptorIndex, ", dimension, constNamePtr, heapDimension);
         printSrcRegister(componentCount);
         out += ")\n";
         println("#else");
@@ -679,6 +683,10 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
 
     switch (instr.dimension)
     {
+        case TextureDimension::Texture1D:
+            // The rider palette reads rows 1 and 2 through offset_x (1, 2 texels).
+            print(", {}", instr.offsetX * 0.5f);
+            break;
         case TextureDimension::Texture2D:
             print(", float2({}, {})", instr.offsetX * 0.5f, instr.offsetY * 0.5f);
             break;
