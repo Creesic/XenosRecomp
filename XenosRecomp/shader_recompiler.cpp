@@ -159,6 +159,26 @@ static constexpr DeclUsageLocation USAGE_LOCATIONS[] =
 };
 #endif
 
+// PGR4: a vfetch whose index register is not the raw vertex index (r0.x)
+// cannot be fed by the input assembler. Non-position elements route through
+// loadIndexedElement (shader_common.h); pgr4-recomp's IndexedElementSlot
+// mirrors this numbering and publishes stride/format/offset per slot with
+// the stream bound as a raw buffer. -1 = no slot (stays on the input).
+static int indexedElementSlot(DeclUsage usage, uint32_t usageIndex)
+{
+    switch (usage)
+    {
+    case DeclUsage::TexCoord: return usageIndex < 8u ? int(usageIndex) : -1;
+    case DeclUsage::Color: return usageIndex < 2u ? int(8u + usageIndex) : -1;
+    case DeclUsage::Normal: return usageIndex < 2u ? int(10u + usageIndex) : -1;
+    case DeclUsage::Tangent: return usageIndex == 0u ? 12 : -1;
+    case DeclUsage::Binormal: return usageIndex == 0u ? 13 : -1;
+    case DeclUsage::BlendWeight: return usageIndex == 0u ? 14 : -1;
+    case DeclUsage::BlendIndices: return usageIndex == 0u ? 15 : -1;
+    default: return -1;
+    }
+}
+
 static const DeclUsageLocation* findUsageLocation(DeclUsage usage, uint32_t usageIndex)
 {
     for (auto& usageLocation : USAGE_LOCATIONS)
@@ -335,6 +355,24 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         print("loadIndexedPosition(g_IndexedPosition{}, g_IndexedPosition({}u), {}(r{}.{}))",
               usageIndex, usageIndex - 1u, instr.isIndexRounded ? "round" : "trunc",
               instr.srcRegister, SWIZZLES[instr.srcSwizzle]);
+        out += "\n#endif\n";
+    }
+    else if ((instr.srcRegister != 0u || instr.srcSwizzle != 0u) &&
+             indexedElementSlot(vertexElement->usage, uint32_t(vertexElement->usageIndex)) >= 0)
+    {
+        // PGR4 decal shadows: quad corners come from the vertex index, the
+        // per-instance matrix from record vertex/4 (pgr4_badshadow2.rdc EID
+        // 26162); through the input assembler every corner read its own record.
+        if (instr.srcRegisterAm)
+            throw std::runtime_error("relative register addressing in indexed element fetch");
+        const uint32_t usageIndex = uint32_t(vertexElement->usageIndex);
+        out += "\n#ifdef __air__\n";
+        print("(input.i{}{})", USAGE_VARIABLES[uint32_t(vertexElement->usage)], usageIndex);
+        out += "\n#else\n";
+        print("loadIndexedElement(g_IndexedElement({}u), {}(r{}.{}))",
+              indexedElementSlot(vertexElement->usage, usageIndex),
+              instr.isIndexRounded ? "round" : "trunc", instr.srcRegister,
+              SWIZZLES[instr.srcSwizzle]);
         out += "\n#endif\n";
     }
     else

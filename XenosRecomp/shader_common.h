@@ -58,6 +58,7 @@ struct PushConstants
 #define g_NdcScale                  vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 496)
 #define g_NdcOffset                 vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 504)
 #define g_IndexedPosition(INDEX)    vk::RawBufferLoad<uint4>(g_PushConstants.SharedConstants + 576 + uint(INDEX) * 16)
+#define g_IndexedElement(INDEX)     vk::RawBufferLoad<uint4>(g_PushConstants.SharedConstants + 624 + uint(INDEX) * 16)
 #define g_ClipPlane                 vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 320)
 #define g_ClipPlaneEnabled          vk::RawBufferLoad<bool>(g_PushConstants.SharedConstants + 336)
 #define g_AlphaThreshold            vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 340)
@@ -134,9 +135,11 @@ struct PushConstants
     uint4 g_VteAndLoopConstants[9] : packoffset(c22); \
     float2 g_NdcScale : packoffset(c31.x); \
     float2 g_NdcOffset : packoffset(c31.z); \
-    uint4 g_IndexedPositions[3] : packoffset(c36);
+    uint4 g_IndexedPositions[3] : packoffset(c36); \
+    uint4 g_IndexedElements[16] : packoffset(c39);
 
 #define g_IndexedPosition(INDEX) g_IndexedPositions[INDEX]
+#define g_IndexedElement(INDEX) g_IndexedElements[INDEX]
 
 #define g_BooleanWord(INDEX) g_BooleanWords[uint(INDEX) / 4u][uint(INDEX) & 3u]
 #define g_VteFlags g_VteAndLoopConstants[0].x
@@ -887,6 +890,12 @@ float4 swapFloats(uint swappedFloats, float4 value, uint semanticIndex)
 ByteAddressBuffer g_IndexedPosition1 : register(t0, space4);
 ByteAddressBuffer g_IndexedPosition2 : register(t1, space4);
 ByteAddressBuffer g_IndexedPosition3 : register(t2, space4);
+// PGR4: vertex streams 0..3 as raw buffers for computed-index fetches on
+// other elements (loadIndexedElement).
+ByteAddressBuffer g_IndexedStream0 : register(t3, space4);
+ByteAddressBuffer g_IndexedStream1 : register(t4, space4);
+ByteAddressBuffer g_IndexedStream2 : register(t5, space4);
+ByteAddressBuffer g_IndexedStream3 : register(t6, space4);
 
 // Declaration-controlled POSITION1..3 fetches. The upload path swaps each
 // guest DWORD, so packed half-floats are ordered high half first.
@@ -894,9 +903,11 @@ ByteAddressBuffer g_IndexedPosition3 : register(t2, space4);
 float4 loadIndexedPosition(ByteAddressBuffer buffer, uint4 metadata, float index)
 {
     uint format = metadata.z;
-    uint bytes = format == 0x1Fu || format == 0x24u ? 4u :
-                 format == 0x20u || format == 0x25u ? 8u :
-                 format == 0x39u ? 12u : format == 0x26u ? 16u : 0u;
+    // k_32 / k_32_32 / k_32_32_32_32 (0x21/0x22/0x23) pass their bits through
+    // like the input assembler's R32_UINT path does.
+    uint bytes = format == 0x1Fu || format == 0x21u || format == 0x24u ? 4u :
+                 format == 0x20u || format == 0x22u || format == 0x25u ? 8u :
+                 format == 0x39u ? 12u : format == 0x23u || format == 0x26u ? 16u : 0u;
     if (bytes == 0u || metadata.w > metadata.y ||
         bytes > metadata.y - metadata.w || (asuint(index) & 0x7FFFFFFFu) >= 0x7F800000u || index < 0.0)
         return 0.0;
@@ -915,10 +926,24 @@ float4 loadIndexedPosition(ByteAddressBuffer buffer, uint4 metadata, float index
         return float4(f16tof32(words.x >> 16u), f16tof32(words.x & 0xFFFFu),
                       f16tof32(words.y >> 16u), f16tof32(words.y & 0xFFFFu));
     }
-    if (format == 0x24u) return float4(asfloat(buffer.Load(address)), 0.0, 0.0, 1.0);
-    if (format == 0x25u) return float4(asfloat(buffer.Load2(address)), 0.0, 1.0);
+    if (format == 0x21u || format == 0x24u) return float4(asfloat(buffer.Load(address)), 0.0, 0.0, 1.0);
+    if (format == 0x22u || format == 0x25u) return float4(asfloat(buffer.Load2(address)), 0.0, 1.0);
     if (format == 0x39u) return float4(asfloat(buffer.Load3(address)), 1.0);
     return asfloat(buffer.Load4(address));
+}
+
+// PGR4 computed-index fetches on non-position elements (the recompiler's
+// indexedElementSlot): metadata = g_IndexedElement(slot) (declared by the
+// generated shader, so passed in), as loadIndexedPosition with the stream
+// number in the top half of .w. Unbound slots read zero.
+float4 loadIndexedElement(uint4 metadata, float index)
+{
+    uint stream = metadata.w >> 16u;
+    metadata.w &= 0xFFFFu;
+    if (stream == 0u) return loadIndexedPosition(g_IndexedStream0, metadata, index);
+    if (stream == 1u) return loadIndexedPosition(g_IndexedStream1, metadata, index);
+    if (stream == 2u) return loadIndexedPosition(g_IndexedStream2, metadata, index);
+    return loadIndexedPosition(g_IndexedStream3, metadata, index);
 }
 #endif
 
