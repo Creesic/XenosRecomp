@@ -357,14 +357,14 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
               instr.srcRegister, SWIZZLES[instr.srcSwizzle]);
         out += "\n#endif\n";
     }
-    else if ((instr.srcRegister != 0u || instr.srcSwizzle != 0u) &&
+    else if ((instr.srcRegister != 0u || instr.srcSwizzle != 0u) && !instr.srcRegisterAm &&
              indexedElementSlot(vertexElement->usage, uint32_t(vertexElement->usageIndex)) >= 0)
     {
         // PGR4 decal shadows: quad corners come from the vertex index, the
         // per-instance matrix from record vertex/4 (pgr4_badshadow2.rdc EID
         // 26162); through the input assembler every corner read its own record.
-        if (instr.srcRegisterAm)
-            throw std::runtime_error("relative register addressing in indexed element fetch");
+        // Relative (a0-addressed) index registers keep the input-assembler path
+        // below rather than dropping the whole shader from the cache.
         const uint32_t usageIndex = uint32_t(vertexElement->usageIndex);
         out += "\n#ifdef __air__\n";
         print("(input.i{}{})", USAGE_VARIABLES[uint32_t(vertexElement->usage)], usageIndex);
@@ -3264,7 +3264,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 sequence >>= 2;
                 instructionCode += 3;
                 ++emittedInstructionCount;
-                if (emittedInstructionCount > 1024 || out.size() > 96 * 1024)
+                // Runaway guard only: PGR4's rider shaders emit past 96 KB once every
+                // computed-index fetch carries its raw-stream form.
+                if (emittedInstructionCount > 4096 || out.size() > 512 * 1024)
                     throw std::runtime_error("shader generated too much HLSL");
             }
 

@@ -157,14 +157,30 @@ static int sehFilter(EXCEPTION_POINTERS* ep, SehInfo* info)
 }
 #endif
 
+// C++ throws inside recompile() surface through the SEH filter as 0xE06D7363
+// with no message; catch them here first so the failure names the cause.
+static bool recompileCatching(ShaderRecompiler& recompiler, const uint8_t* data,
+                              const std::string_view include, std::string& failure)
+{
+    try
+    {
+        recompiler.recompile(data, include);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        failure = fmt::format("exception: {}", e.what());
+        return false;
+    }
+}
+
 static bool tryRecompile(ShaderRecompiler& recompiler, const uint8_t* data, const std::string_view include, std::string& failure)
 {
 #ifdef _WIN32
     SehInfo info;
     __try
     {
-        recompiler.recompile(data, include);
-        return true;
+        return recompileCatching(recompiler, data, include, failure);
     }
     __except (sehFilter(GetExceptionInformation(), &info))
     {
@@ -172,7 +188,7 @@ static bool tryRecompile(ShaderRecompiler& recompiler, const uint8_t* data, cons
         return false;
     }
 #else
-    recompiler.recompile(data, include);
+    return recompileCatching(recompiler, data, include, failure);
     return true;
 #endif
 }
