@@ -11,6 +11,26 @@
 #include "air_compiler.h"
 #endif
 
+// Shader cache key: XXH3 of the container without its debug block (header
+// words 3..4 bound it: compile timestamp, then the build's source path). PGR4's
+// title update ships every shader recompiled with only that block changed.
+// Containers without that layout hash whole. The game hashes the same way
+// (src/render/d3d_resource_hooks.cpp, HashShaderContainer).
+static XXH64_hash_t hashShaderContainer(const void* container, size_t size)
+{
+    auto* bytes = static_cast<const uint8_t*>(container);
+    auto be32 = [&](size_t offset)
+    {
+        return uint32_t(bytes[offset]) << 24 | uint32_t(bytes[offset + 1]) << 16 | uint32_t(bytes[offset + 2]) << 8 | bytes[offset + 3];
+    };
+    const uint32_t begin = be32(12), end = be32(16), pathLength = be32(40);
+    if (begin != 0x24 || end != ((begin + 8 + pathLength + 3) & ~3u) || end > size)
+        return XXH3_64bits(container, size);
+    std::vector<uint8_t> copy(bytes, bytes + size);
+    std::fill(copy.begin() + begin, copy.begin() + end, uint8_t(0));
+    return XXH3_64bits(copy.data(), size);
+}
+
 static std::unique_ptr<uint8_t[]> readAllBytes(const char* filePath, size_t& fileSize)
 {
     FILE* file = fopen(filePath, "rb");
@@ -319,7 +339,7 @@ static DumpResult dumpHlslShaders(const char* input, const char* output, const s
             if (tryGetShaderContainerSize(fileData.get(), fileSize, i, dataSize))
             {
                 auto shaderContainer = reinterpret_cast<const ShaderContainer*>(fileData.get() + i);
-                XXH64_hash_t hash = XXH3_64bits(shaderContainer, dataSize);
+                XXH64_hash_t hash = hashShaderContainer(shaderContainer, dataSize);
                 if (dumpedShaders.find(hash) == dumpedShaders.end())
                 {
                     ShaderRecompiler recompiler;
@@ -452,7 +472,7 @@ static int runMain(int argc, char** argv)
                 if (tryGetShaderContainerSize(fileData.get(), fileSize, i, dataSize))
                 {
                     auto shaderContainer = reinterpret_cast<const ShaderContainer*>(fileData.get() + i);
-                    XXH64_hash_t hash = XXH3_64bits(shaderContainer, dataSize);
+                    XXH64_hash_t hash = hashShaderContainer(shaderContainer, dataSize);
                     auto shader = shaders.try_emplace(hash);
                     if (shader.second)
                     {
