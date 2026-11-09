@@ -2,6 +2,7 @@ project(XenosRecomp)
 
 if (WIN32)
     option(XENOS_RECOMP_DXIL "Generate DXIL shader cache" ON)
+    option(XENOS_RECOMP_DXBC "Generate shader model 5.1 DXBC shader cache" ON)
 endif()
 
 if (APPLE)
@@ -58,4 +59,10 @@ endif()
 if (XENOS_RECOMP_AIR)
     target_compile_definitions(XenosRecomp PRIVATE XENOS_RECOMP_AIR)
     target_sources(XenosRecomp PRIVATE air_compiler.cpp air_compiler.h)
+endif()
+
+if (XENOS_RECOMP_DXBC)
+    target_compile_definitions(XenosRecomp PRIVATE XENOS_RECOMP_DXBC)
+    target_sources(XenosRecomp PRIVATE dxbc_compiler.cpp dxbc_compiler.h)
+    target_link_libraries(XenosRecomp PRIVATE d3dcompiler)
 endif()

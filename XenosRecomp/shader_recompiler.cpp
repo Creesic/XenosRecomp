@@ -2066,6 +2066,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     bool printedSamplerConstants[16] {};
     std::vector<std::string> samplerConstantNames;
+    std::map<uint32_t, std::string> samplerRegisterNames;
 
     for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
     {
@@ -2079,6 +2080,21 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             if (constantInfo->registerIndex < std::size(printedSamplerConstants))
                 printedSamplerConstants[constantInfo->registerIndex] = true;
 
+            const auto [canonical, inserted] = samplerRegisterNames.emplace(
+                constantInfo->registerIndex, constantName);
+            if (!inserted)
+            {
+                // FXC disallows overlapping cbuffer members; reflected aliases
+                // must still read the same texture and sampler descriptor slots.
+                out += "#ifdef __DXBC__\n";
+                for (const auto dimension : TEXTURE_DIMENSIONS)
+                    println("#define {}_Texture{}DescriptorIndex {}_Texture{}DescriptorIndex",
+                        constantName, dimension, canonical->second, dimension);
+                println("#define {}_SamplerDescriptorIndex {}_SamplerDescriptorIndex",
+                    constantName, canonical->second);
+                out += "#else\n";
+            }
+
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
                 println("\tuint {}_Texture{}DescriptorIndex : packoffset(c{}.{});",
@@ -2087,6 +2103,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             println("\tuint {}_SamplerDescriptorIndex : packoffset(c{}.{});",
                 constantName, samplerIndexOffset(constantInfo->registerIndex) / 16, SWIZZLES[(samplerIndexOffset(constantInfo->registerIndex) % 16) / 4]);
+            if (!inserted)
+                out += "#endif\n";
         }
     }
 
@@ -2107,10 +2125,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             samplerIndex, samplerIndexOffset(samplerIndex) / 16, SWIZZLES[(samplerIndexOffset(samplerIndex) % 16) / 4]);
     }
 
-    out += "\tDEFINE_SHARED_CONSTANTS();\n";
+    out += "\tDEFINE_SHARED_CONSTANTS;\n";
+    out += "#ifdef __DXBC__\n";
+    println("\tuint g_DxbcSpecConstants : packoffset(c55.{});", isPixelShader ? "y" : "x");
+    out += "#endif\n";
     out += "};\n\n";
 
     out += "#endif\n";
+    // FXC rejects empty-parameter macros; the concrete function is inlined.
+    out += "#ifdef __DXBC__\nuint g_SpecConstants() { return g_DxbcSpecConstants; }\n#endif\n";
 
     for (const std::string& samplerName : samplerConstantNames)
     {
@@ -2287,7 +2310,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             out += '\t';
 
-            print("[[vk::location({})]] ", usageLocation->location);
+            println("\n#ifdef __spirv__\n[[vk::location({})]]\n#endif", usageLocation->location);
 
             println("{0} i{1}{2} : {3}{2};", usageType, USAGE_VARIABLES[uint32_t(vertexElement.usage)],
                 usageIndex, USAGE_SEMANTICS[uint32_t(vertexElement.usage)]);
