@@ -97,3 +97,35 @@ if(PYTHON_EXECUTABLE AND EXISTS "${FM2_RUNTIME_SHADER_DIR}")
             --json "${CMAKE_CURRENT_BINARY_DIR}/fm2_runtime_audit.json"
     )
 endif()
+
+if(XENOS_RECOMP_DXBC)
+    add_test(NAME dxbc_cache_compilation
+        COMMAND ${CMAKE_COMMAND}
+            "-DXENOS_RECOMP=$<TARGET_FILE:XenosRecomp>"
+            "-DFIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "-DSHADER_COMMON=${PROJECT_SOURCE_DIR}/XenosRecomp/shader_common.h"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/dxbc_cache"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_dxbc.cmake")
+
+    add_executable(dxbc_reflection dxbc_reflection.cpp ../XenosRecomp/dxbc_compiler.cpp)
+    target_include_directories(dxbc_reflection PRIVATE ../XenosRecomp)
+    target_link_libraries(dxbc_reflection PRIVATE d3dcompiler dxguid)
+    add_test(NAME dxbc_stage_constants
+        COMMAND ${CMAKE_COMMAND}
+            "-DXENOS_RECOMP=$<TARGET_FILE:XenosRecomp>"
+            "-DREFLECT=$<TARGET_FILE:dxbc_reflection>"
+            "-DFIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "-DSHADER_COMMON=${PROJECT_SOURCE_DIR}/XenosRecomp/shader_common.h"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/dxbc_reflection"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_dxbc_reflection.cmake")
+endif()
+
+if(NOT XENOS_RECOMP_DXBC)
+    add_test(NAME disabled_dxbc_cache_abi
+        COMMAND ${CMAKE_COMMAND}
+            "-DXENOS_RECOMP=$<TARGET_FILE:XenosRecomp>"
+            "-DFIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "-DSHADER_COMMON=${PROJECT_SOURCE_DIR}/XenosRecomp/shader_common.h"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/disabled_dxbc_cache"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_empty_dxbc.cmake")
+endif()

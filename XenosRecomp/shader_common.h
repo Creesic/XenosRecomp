@@ -118,7 +118,7 @@ struct PushConstants
 
 #else
 
-#define DEFINE_SHARED_CONSTANTS() \
+#define DEFINE_SHARED_CONSTANTS \
     uint4 g_BooleanWords[2] : packoffset(c16); \
     uint g_SwappedTexcoords : packoffset(c18.x); \
     uint g_SwappedNormals : packoffset(c18.y); \
@@ -152,6 +152,12 @@ struct PushConstants
 
 uint g_SpecConstants();
 
+#endif
+
+#ifdef __DXBC__
+#define select(c, a, b) ((c) ? (a) : (b))
+#define and(a, b) ((a) && (b))
+#define or(a, b) ((a) || (b))
 #endif
 
 #define BOOL_BIT(ADDRESS) ((g_BooleanWord(uint(ADDRESS) >> 5u) & (1u << (uint(ADDRESS) & 31u))) != 0u)
@@ -261,14 +267,14 @@ struct AtomicUintBuffer
     device atomic_uint* buffer;
 };
 
-uint2 getTexture2DDimensions(texture2d<float> texture)
+uint2 getTexture2DDimensions(texture2d<float> tex_)
 {
-    return uint2(texture.get_width(), texture.get_height());
+    return uint2(tex_.get_width(), tex_.get_height());
 }
 
-uint3 getTexture2DArrayDimensions(texture2d_array<float> texture)
+uint3 getTexture2DArrayDimensions(texture2d_array<float> tex_)
 {
-    return uint3(texture.get_width(), texture.get_height(), texture.get_array_size());
+    return uint3(tex_.get_width(), tex_.get_height(), tex_.get_array_size());
 }
 
 // PGR4: unnormalized (texel) fetch coordinates (tfetch tx_coord_denorm).
@@ -295,9 +301,9 @@ float4 tfetch2D(constant Texture2DDescriptorHeap* textureHeap,
                 uint samplerDescriptorIndex,
                 float2 texCoord, float2 offset)
 {
-    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
-    return texture.sample(sampler, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(texture));
+    return tex_.sample(sampler, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(tex_));
 }
 
 float4 tfetch1D(constant Texture2DDescriptorHeap* textureHeap,
@@ -316,10 +322,10 @@ float4 tfetch2DArray(constant Texture2DArrayDescriptorHeap* textureHeap,
                      uint samplerDescriptorIndex,
                      float3 texCoord, float3 offset)
 {
-    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d_array<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
-    uint3 dimensions = getTexture2DArrayDimensions(texture);
-    return texture.sample(sampler, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy), uint(texCoord.z * dimensions.z));
+    uint3 dimensions = getTexture2DArrayDimensions(tex_);
+    return tex_.sample(sampler, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy), uint(texCoord.z * dimensions.z));
 }
 
 float4 tfetchCube(constant TextureCubeDescriptorHeap* textureHeap,
@@ -328,10 +334,10 @@ float4 tfetchCube(constant TextureCubeDescriptorHeap* textureHeap,
                   uint samplerDescriptorIndex,
                   float3 texCoord)
 {
-    texturecube<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texturecube<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
     float3 dir = cubeDir(texCoord);
-    return texture.sample(sampler, dir);
+    return tex_.sample(sampler, dir);
 }
 
 float4 tfetch2DL(constant Texture2DDescriptorHeap* textureHeap,
@@ -339,9 +345,9 @@ float4 tfetch2DL(constant Texture2DDescriptorHeap* textureHeap,
                  uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                  float2 texCoord, float2 offset, float lod)
 {
-    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
-    return texture.sample(sampler, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(texture), level(lod));
+    return tex_.sample(sampler, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(tex_), level(lod));
 }
 
 float4 tfetch1DL(constant Texture2DDescriptorHeap* textureHeap,
@@ -358,10 +364,10 @@ float4 tfetch2DArrayL(constant Texture2DArrayDescriptorHeap* textureHeap,
                       uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                       float3 texCoord, float3 offset, float lod)
 {
-    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d_array<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
-    uint3 dimensions = getTexture2DArrayDimensions(texture);
-    return texture.sample(sampler, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy),
+    uint3 dimensions = getTexture2DArrayDimensions(tex_);
+    return tex_.sample(sampler, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy),
                           uint(texCoord.z * dimensions.z), level(lod));
 }
 
@@ -370,9 +376,9 @@ float4 tfetchCubeL(constant TextureCubeDescriptorHeap* textureHeap,
                    uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                    float3 texCoord, float lod)
 {
-    texturecube<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texturecube<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
-    return texture.sample(sampler, cubeDir(texCoord), level(lod));
+    return tex_.sample(sampler, cubeDir(texCoord), level(lod));
 }
 
 float2 getWeights2D(constant Texture2DDescriptorHeap* textureHeap,
@@ -381,8 +387,8 @@ float2 getWeights2D(constant Texture2DDescriptorHeap* textureHeap,
                     uint samplerDescriptorIndex,
                     float2 texCoord, float2 offset)
 {
-    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
-    return select(fract(texCoord * float2(getTexture2DDimensions(texture)) + offset - 0.5), 0.0, isnan(texCoord));
+    texture2d<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
+    return select(fract(texCoord * float2(getTexture2DDimensions(tex_)) + offset - 0.5), 0.0, isnan(texCoord));
 }
 
 float getWeights1D(constant Texture2DDescriptorHeap* textureHeap,
@@ -401,32 +407,43 @@ float3 getWeights2DArray(constant Texture2DArrayDescriptorHeap* textureHeap,
                          uint samplerDescriptorIndex,
                          float3 texCoord, float3 offset)
 {
-    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
-    return select(fract(texCoord * float3(getTexture2DArrayDimensions(texture)) + offset - 0.5), 0.0, isnan(texCoord));
+    texture2d_array<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
+    return select(fract(texCoord * float3(getTexture2DArrayDimensions(tex_)) + offset - 0.5), 0.0, isnan(texCoord));
 }
 
 #else
 
+#ifdef __DXBC__
+Texture2D<float4> g_Texture2DDescriptorHeap[20] : register(t0, space0);
+Texture2DArray<float4> g_Texture2DArrayDescriptorHeap[20] : register(t0, space1);
+TextureCube<float4> g_TextureCubeDescriptorHeap[20] : register(t0, space2);
+#ifdef __DXBC_VERTEX__
+SamplerState g_SamplerDescriptorHeap[4] : register(s0, space5);
+#else
+SamplerState g_SamplerDescriptorHeap[16] : register(s0, space3);
+#endif
+#else
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 Texture2DArray<float4> g_Texture2DArrayDescriptorHeap[] : register(t0, space1);
 TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
+#endif
 
 #ifdef MARATHON_RECOMP
 RWStructuredBuffer<uint> g_ConditionalSurveyBuffer : register(u0, space4);
 #endif
 
-uint2 getTexture2DDimensions(Texture2D<float4> texture)
+uint2 getTexture2DDimensions(Texture2D<float4> tex_)
 {
     uint2 dimensions;
-    texture.GetDimensions(dimensions.x, dimensions.y);
+    tex_.GetDimensions(dimensions.x, dimensions.y);
     return dimensions;
 }
 
-uint3 getTexture2DArrayDimensions(Texture2DArray<float4> texture)
+uint3 getTexture2DArrayDimensions(Texture2DArray<float4> tex_)
 {
     uint4 dimensions;
-    texture.GetDimensions(0, dimensions.x, dimensions.y, dimensions.z, dimensions.w);
+    tex_.GetDimensions(0, dimensions.x, dimensions.y, dimensions.z, dimensions.w);
     return dimensions.xyz;
 }
 
@@ -450,8 +467,8 @@ float3 denormCoord2DArray(uint resourceDescriptorIndex, float3 texCoord)
 
 float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), 0.0);
+    Texture2D<float4> tex_ = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return tex_.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(tex_), 0.0);
 }
 
 float4 tfetch1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord, float offset)
@@ -461,9 +478,9 @@ float4 tfetch1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float
 
 float4 tfetch2DArray(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
 {
-    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
-    uint3 dimensions = getTexture2DArrayDimensions(texture);
-    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy, texCoord.z * dimensions.z), 0.0);
+    Texture2DArray<float4> tex_ = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    uint3 dimensions = getTexture2DArrayDimensions(tex_);
+    return tex_.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy, texCoord.z * dimensions.z), 0.0);
 }
 
 float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
@@ -476,9 +493,9 @@ float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, flo
 float4 tfetch2DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                  float2 texCoord, float2 offset, float lod)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
-                               texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), lod);
+    Texture2D<float4> tex_ = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return tex_.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+                               texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(tex_), lod);
 }
 
 float4 tfetch1DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
@@ -491,9 +508,9 @@ float4 tfetch1DL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 float4 tfetch2DArrayL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                       float3 texCoord, float3 offset, float lod)
 {
-    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
-    uint3 dimensions = getTexture2DArrayDimensions(texture);
-    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+    Texture2DArray<float4> tex_ = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    uint3 dimensions = getTexture2DArrayDimensions(tex_);
+    return tex_.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
                                float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy,
                                       texCoord.z * dimensions.z), lod);
 }
@@ -507,8 +524,8 @@ float4 tfetchCubeL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 
 float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
+    Texture2D<float4> tex_ = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(tex_) + offset - 0.5));
 }
 
 float getWeights1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord)
@@ -518,8 +535,8 @@ float getWeights1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, fl
 
 float3 getWeights2DArray(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
 {
-    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
-    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DArrayDimensions(texture) + offset - 0.5));
+    Texture2DArray<float4> tex_ = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DArrayDimensions(tex_) + offset - 0.5));
 }
 
 #endif
@@ -650,9 +667,9 @@ float4 tfetch2DBicubic(constant Texture2DDescriptorHeap* textureHeap,
                        uint samplerDescriptorIndex,
                        float2 texCoord, float2 offset)
 {
-    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler sampler = samplerHeap[samplerDescriptorIndex].samp;
-    uint2 dimensions = getTexture2DDimensions(texture);
+    uint2 dimensions = getTexture2DDimensions(tex_);
 
     float x = texCoord.x * dimensions.x + offset.x;
     float y = texCoord.y * dimensions.y + offset.y;
@@ -672,10 +689,10 @@ float4 tfetch2DBicubic(constant Texture2DDescriptorHeap* textureHeap,
     float h1y = h1(fy);
 
     float4 r =
-        g0(fy) * (g0x * texture.sample(sampler, float2(px + h0x, py + h0y) / float2(dimensions)) +
-              g1x * texture.sample(sampler, float2(px + h1x, py + h0y) / float2(dimensions))) +
-        g1(fy) * (g0x * texture.sample(sampler, float2(px + h0x, py + h1y) / float2(dimensions)) +
-              g1x * texture.sample(sampler, float2(px + h1x, py + h1y) / float2(dimensions)));
+        g0(fy) * (g0x * tex_.sample(sampler, float2(px + h0x, py + h0y) / float2(dimensions)) +
+              g1x * tex_.sample(sampler, float2(px + h1x, py + h0y) / float2(dimensions))) +
+        g1(fy) * (g0x * tex_.sample(sampler, float2(px + h0x, py + h1y) / float2(dimensions)) +
+              g1x * tex_.sample(sampler, float2(px + h1x, py + h1y) / float2(dimensions)));
 
     return r;
 }
@@ -684,9 +701,9 @@ float4 tfetch2DBicubic(constant Texture2DDescriptorHeap* textureHeap,
 
 float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    Texture2D<float4> tex_ = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
     SamplerState samplerState = g_SamplerDescriptorHeap[samplerDescriptorIndex];
-    uint2 dimensions = getTexture2DDimensions(texture);
+    uint2 dimensions = getTexture2DDimensions(tex_);
     
     float x = texCoord.x * dimensions.x + offset.x;
     float y = texCoord.y * dimensions.y + offset.y;
@@ -706,17 +723,17 @@ float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex
     float h1y = h1(fy);
 
     float4 r =
-        g0(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h0y) / float2(dimensions)) +
-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h0y) / float2(dimensions))) +
-        g1(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h1y) / float2(dimensions)) +
-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h1y) / float2(dimensions)));
+        g0(fy) * (g0x * tex_.Sample(samplerState, float2(px + h0x, py + h0y) / float2(dimensions)) +
+            g1x * tex_.Sample(samplerState, float2(px + h1x, py + h0y) / float2(dimensions))) +
+        g1(fy) * (g0x * tex_.Sample(samplerState, float2(px + h0x, py + h1y) / float2(dimensions)) +
+            g1x * tex_.Sample(samplerState, float2(px + h1x, py + h1y) / float2(dimensions)));
 
     return r;
 }
 
 #endif
 
-// bug-140 (computed LOD): Xenos pixel-shader texture fetches default to
+// bug-140 (computed LOD): Xenos pixel-shader tex_ fetches default to
 // UseComputedLOD=true -- implicit-LOD sampling plus the fetch's 1/32-step LOD
 // bias -- but the base tfetch* helpers force SampleLevel(0) (required for
 // vertex shaders, which have no derivatives). These PS-only variants restore
@@ -729,9 +746,9 @@ float4 tfetch2DCL(constant Texture2DDescriptorHeap* textureHeap,
                   uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                   float2 texCoord, float2 offset, float lodBias)
 {
-    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler samp = samplerHeap[samplerDescriptorIndex].samp;
-    return texture.sample(samp, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(texture), bias(lodBias));
+    return tex_.sample(samp, texCoord + (offset + float2(0.00146484375, 0.00146484375)) / (float2)getTexture2DDimensions(tex_), bias(lodBias));
 }
 
 float4 tfetch1DCL(constant Texture2DDescriptorHeap* textureHeap,
@@ -748,10 +765,10 @@ float4 tfetch2DArrayCL(constant Texture2DArrayDescriptorHeap* textureHeap,
                        uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                        float3 texCoord, float3 offset, float lodBias)
 {
-    texture2d_array<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texture2d_array<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler samp = samplerHeap[samplerDescriptorIndex].samp;
-    uint3 dimensions = getTexture2DArrayDimensions(texture);
-    return texture.sample(samp, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy),
+    uint3 dimensions = getTexture2DArrayDimensions(tex_);
+    return tex_.sample(samp, texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / float2(dimensions.xy),
                           uint(texCoord.z * dimensions.z), bias(lodBias));
 }
 
@@ -760,17 +777,17 @@ float4 tfetchCubeCL(constant TextureCubeDescriptorHeap* textureHeap,
                     uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                     float3 texCoord, float lodBias)
 {
-    texturecube<float> texture = textureHeap[resourceDescriptorIndex].tex;
+    texturecube<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
     sampler samp = samplerHeap[samplerDescriptorIndex].samp;
-    return texture.sample(samp, cubeDir(texCoord), bias(lodBias));
+    return tex_.sample(samp, cubeDir(texCoord), bias(lodBias));
 }
 #else
 float4 tfetch2DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                   float2 texCoord, float2 offset, float lodBias)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return texture.SampleBias(g_SamplerDescriptorHeap[samplerDescriptorIndex],
-                              texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(texture), lodBias);
+    Texture2D<float4> tex_ = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return tex_.SampleBias(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+                              texCoord + (offset + float2(0.00146484375, 0.00146484375)) / getTexture2DDimensions(tex_), lodBias);
 }
 
 float4 tfetch1DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
@@ -783,9 +800,9 @@ float4 tfetch1DCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
 float4 tfetch2DArrayCL(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
                        float3 texCoord, float3 offset, float lodBias)
 {
-    Texture2DArray<float4> texture = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
-    uint3 dimensions = getTexture2DArrayDimensions(texture);
-    return texture.SampleBias(g_SamplerDescriptorHeap[samplerDescriptorIndex],
+    Texture2DArray<float4> tex_ = g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex];
+    uint3 dimensions = getTexture2DArrayDimensions(tex_);
+    return tex_.SampleBias(g_SamplerDescriptorHeap[samplerDescriptorIndex],
                               float3(texCoord.xy + (offset.xy + float2(0.00146484375, 0.00146484375)) / dimensions.xy,
                                      texCoord.z * dimensions.z), lodBias);
 }
@@ -883,7 +900,11 @@ float4 tfetchPos3N(uint4 value)
 
 float4 swapFloats(uint swappedFloats, float4 value, uint semanticIndex)
 {
+#ifdef __DXBC__
+    return (swappedFloats & (1u << semanticIndex)) != 0 ? value.yxwz : value;
+#else
     return (swappedFloats & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
+#endif
 }
 
 #ifndef __air__
@@ -1040,8 +1061,8 @@ float2 getPixelCoord(constant Texture2DDescriptorHeap* textureHeap,
                      uint resourceDescriptorIndex,
                      float2 texCoord)
 {
-    texture2d<float> texture = textureHeap[resourceDescriptorIndex].tex;
-    return (float2)getTexture2DDimensions(texture) * texCoord;
+    texture2d<float> tex_ = textureHeap[resourceDescriptorIndex].tex;
+    return (float2)getTexture2DDimensions(tex_) * texCoord;
 }
 
 #else

@@ -6,6 +6,9 @@
 #include "shader.h"
 #include "shader_recompiler.h"
 #include "dxc_compiler.h"
+#ifdef XENOS_RECOMP_DXBC
+#include "dxbc_compiler.h"
+#endif
 
 #ifdef XENOS_RECOMP_AIR
 #include "air_compiler.h"
@@ -145,6 +148,7 @@ struct RecompiledShader
 {
     uint8_t* data = nullptr;
     IDxcBlob* dxil = nullptr;
+    std::vector<uint8_t> dxbc;
     std::vector<uint8_t> spirv;
     std::vector<uint8_t> air;
     uint32_t specConstantsMask = 0;
@@ -230,6 +234,10 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
 
         shader.specConstantsMask = recompiler.specConstantsMask;
 
+#ifdef XENOS_RECOMP_DXBC
+        shader.dxbc = DxbcCompiler::compile(recompiler.out, recompiler.isPixelShader);
+#endif
+
         thread_local DxcCompiler dxcCompiler;
 
 #ifdef XENOS_RECOMP_DXIL
@@ -298,7 +306,10 @@ void recompileShader(RecompiledShader& shader, XXH64_hash_t hash, const std::str
 
     size_t currentProgress = ++progress;
     if ((currentProgress % 10) == 0 || currentProgress == numShaders)
+    {
         fmt::println("Recompiling shaders... {}%", currentProgress / float(numShaders) * 100.0f);
+        fflush(stdout);
+    }
 }
 
 struct DumpResult
@@ -570,13 +581,12 @@ static int runMain(int argc, char** argv)
             ++failureCount;
             fmt::println(stderr, "  {:016X} {}: {}", hash, shaderFilenames[hash], shader.failure);
         }
-        // PGR4 (2026-09-02): a shader that fails to translate/compile is left
-        // out of the cache instead of vetoing it -- the runtime misses on that
-        // hash and dumps it again, everything else gets accelerated.
+        // Keep the last usable cache if any enabled backend failed.
         if (failureCount != 0)
         {
-            fmt::println(stderr, "Skipping {} of {} shaders that failed to compile",
+            fmt::println(stderr, "Refusing to replace cache: {} of {} shaders failed to compile",
                 failureCount, shaders.size());
+            return 1;
         }
 
         fmt::println("Creating shader cache...");
@@ -586,6 +596,7 @@ static int runMain(int argc, char** argv)
         f.println("ShaderCacheEntry g_shaderCacheEntries[] = {{");
 
         std::vector<uint8_t> dxil;
+        std::vector<uint8_t> dxbc;
         std::vector<uint8_t> spirv;
         std::vector<uint8_t> air;
         size_t writtenShaderCount = 0;
@@ -604,10 +615,11 @@ static int runMain(int argc, char** argv)
             // Prevent bad escape sequences in Windows shader path metadata.
             std::replace(filename.begin(), filename.end(), '\\', '/');
 
-            f.println("\t{{ 0x{:X}, {}, {}, {}, {}, {}, {}, {}, \"{}\" }},",
+            f.println("\t{{ 0x{:X}, {}, {}, {}, {}, {}, {}, {}, \"{}\", {}, {} }},",
                 hash, dxil.size(), (shader.dxil != nullptr) ? shader.dxil->GetBufferSize() : 0,
-                spirv.size(), shader.spirv.size(), air.size(), shader.air.size(), shader.specConstantsMask, filename);
+                spirv.size(), shader.spirv.size(), air.size(), shader.air.size(), shader.specConstantsMask, filename, dxbc.size(), shader.dxbc.size());
 
+            dxbc.insert(dxbc.end(), shader.dxbc.begin(), shader.dxbc.end());
             if (shader.dxil != nullptr)
             {
                 dxil.insert(dxil.end(), reinterpret_cast<uint8_t *>(shader.dxil->GetBufferPointer()),
@@ -640,6 +652,15 @@ static int runMain(int argc, char** argv)
         f.println("const size_t g_dxilCacheCompressedSize = {};", dxilCompressed.size());
         f.println("const size_t g_dxilCacheDecompressedSize = {};", dxil.size());
 #endif
+
+        fmt::println("Compressing DXBC cache...");
+        const auto dxbcCompressed = compressBytes(dxbc, level);
+        f.print("const uint8_t g_compressedDxbcCache[] = {{");
+        for (auto data : dxbcCompressed)
+            f.print("{},", data);
+        f.println("}};");
+        f.println("const size_t g_dxbcCacheCompressedSize = {};", dxbcCompressed.size());
+        f.println("const size_t g_dxbcCacheDecompressedSize = {};", dxbc.size());
 
 #ifdef XENOS_RECOMP_AIR
         fmt::println("Compressing AIR cache...");
